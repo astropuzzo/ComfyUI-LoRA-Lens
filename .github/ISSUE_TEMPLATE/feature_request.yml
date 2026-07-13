@@ -1,0 +1,17 @@
+name: Feature request
+description: Propose a model adapter or product improvement
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes:
+      label: Problem and proposed outcome
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Official model card or workflow source
+  - type: textarea
+    attributes:
+      label: Required files, nodes, and sampling behavior
+

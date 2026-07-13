@@ -1,0 +1,37 @@
+name: Bug report
+description: Report a reproducible LoRA Lens problem
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Describe expected and actual behavior.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: LoRA Lens and ComfyUI versions
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: OS, GPU, and VRAM
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Model profile or custom workflow
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Complete first traceback
+      render: shell
+  - type: checkboxes
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed private images, model weights, tokens, and personal paths.
+          required: true
+
