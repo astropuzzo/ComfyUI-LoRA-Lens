@@ -36,7 +36,13 @@ Search for **ComfyUI LoRA Lens** in ComfyUI Manager after it is listed in the re
 
 ### Manual
 
-Clone or download this repository into:
+Clone this repository into ComfyUI's `custom_nodes` folder:
+
+```bash
+git clone https://github.com/astropuzzo/ComfyUI-LoRA-Lens.git
+```
+
+The resulting directory should be:
 
 ```text
 ComfyUI/custom_nodes/ComfyUI-LoRA-Lens
@@ -98,4 +104,3 @@ Reference images, LoRAs, prompts, scores, and generated images stay in your loca
 ## License
 
 LoRA Lens code is released under the [MIT License](LICENSE). Model weights and base models retain their own licenses; some, including Anima or FLUX variants, may restrict commercial use. Check each upstream model card before distribution or commercial use.
-
