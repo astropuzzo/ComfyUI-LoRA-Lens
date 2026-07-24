@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import csv
 import io
 import json
@@ -38,7 +39,7 @@ except Exception:
     PromptServer = None
 
 
-LAB_VERSION = "7.0.0"
+LAB_VERSION = "7.1.0"
 BASELINE_VALUE = "__LORALAB_BASELINE__"
 RUN_FOLDER = "LoRA_Lab"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
@@ -263,6 +264,35 @@ def _normalize_turbo_lora(payload: dict, available: set[str]) -> dict:
     if strength < -2.0 or strength > 2.0:
         raise ValueError("Turbo LoRA strength must be between -2 and 2.")
     return {"enabled": enabled, "filename": filename, "strength": strength}
+
+
+def _normalize_aux_loras(payload: dict, available: set[str]) -> list[dict]:
+    raw = payload.get("aux_loras") or []
+    if not isinstance(raw, list):
+        raise ValueError("Always-on auxiliary LoRAs must be a list.")
+    normalized = []
+    seen = set()
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError(f"Auxiliary LoRA {index + 1} must be an object.")
+        enabled = bool(item.get("enabled", True))
+        filename = str(item.get("filename") or "").strip()
+        strength = float(item.get("strength", 1.0))
+        if not enabled:
+            continue
+        if not filename:
+            raise ValueError(f"Auxiliary LoRA {index + 1} has no file selected.")
+        if filename not in available:
+            raise FileNotFoundError(f"Auxiliary LoRA is not installed: {filename}")
+        if filename in seen:
+            raise ValueError(f"Auxiliary LoRA is listed more than once: {filename}")
+        if strength < -2.0 or strength > 2.0:
+            raise ValueError("Auxiliary LoRA strengths must be between -2 and 2.")
+        seen.add(filename)
+        normalized.append({"filename": filename, "strength": strength})
+    if len(normalized) > 8:
+        raise ValueError("Maximum eight always-on auxiliary LoRAs per run.")
+    return normalized
 
 
 def _model_filename(profile: dict) -> str:
@@ -585,6 +615,7 @@ def _make_plan(payload: dict) -> dict:
     candidates = _build_candidates(payload, available_loras)
     mode = str(payload.get("mode") or "compare")
     turbo_lora = _normalize_turbo_lora(payload, available_loras)
+    aux_loras = _normalize_aux_loras(payload, available_loras)
     if mode == "stack_compare":
         turbo_lora["enabled"] = True
         if not turbo_lora["filename"] or turbo_lora["filename"] not in available_loras:
@@ -592,10 +623,16 @@ def _make_plan(payload: dict) -> dict:
     if turbo_lora["enabled"]:
         if any(candidate["filename"] == turbo_lora["filename"] for candidate in candidates):
             raise ValueError("Turbo LoRA toggle already applies this LoRA. Do not also select it as a candidate.")
+        if any(item["filename"] == turbo_lora["filename"] for item in aux_loras):
+            raise ValueError("Turbo LoRA is also in the always-on auxiliary stack. Remove the duplicate.")
         if mode != "stack_compare":
             for candidate in candidates:
                 if candidate.get("baseline"):
                     candidate["label"] = "Control · Turbo LoRA only"
+    candidate_files = {candidate["filename"] for candidate in candidates if not candidate.get("baseline")}
+    duplicate_candidates = sorted(candidate_files & {item["filename"] for item in aux_loras})
+    if duplicate_candidates:
+        raise ValueError(f"Candidate LoRAs cannot also be always-on auxiliaries: {duplicate_candidates[:3]}")
     scenarios = []
     for prompt_index, prompt in enumerate(prompts):
         for seed_index, seed in enumerate(seeds):
@@ -696,12 +733,14 @@ def _make_plan(payload: dict) -> dict:
         "vae_name": vae_name,
         "model_patches": model_patches,
         "turbo_lora": turbo_lora,
+        "aux_loras": aux_loras,
         "compatibility": {
             "model_family": "Custom API workflow" if workflow_adapter == "api_template" else profile.get("family", "Custom"),
             "variant": "Imported" if workflow_adapter == "api_template" else profile.get("variant", "Custom"),
             "adapter": workflow_adapter if workflow_adapter == "api_template" else profile.get("adapter", "split_single"),
             "validated": True,
             "turbo_double_apply": False,
+            "aux_lora_count": len(aux_loras),
             "model_patch_count": len(model_patches),
         },
         "width": width,
@@ -722,6 +761,7 @@ def _make_plan(payload: dict) -> dict:
         "submitted_prompt_ids": [],
         "submitted_jobs": {},
         "queue_errors": [],
+        "auto_cleanup": True,
         "estimate": {
             "jobs": total,
             "seconds": int(total * (28.0 if (turbo_lora["enabled"] and profile["steps"] == 8) else profile["seconds_per_cell_4090"] * profile["steps"] / max(1, PROFILES[profile_id]["steps"])) * (width * height) / (1024 * 1024)),
@@ -775,10 +815,31 @@ def _custom_job_prompt(run: dict, scenario: dict, candidate: dict, candidate_ind
         "{{HEIGHT}}": int(run["height"]),
     }
     workflow = _replace_template_values(run["api_workflow"], replacements)
-    for node in workflow.values():
+    identity_nodes = []
+    for node_id, node in workflow.items():
         if node.get("class_type") == "LoRALabIdentityLoader":
             node["inputs"]["lora_name"] = candidate["filename"]
             node["inputs"]["strength_model"] = float(candidate["strength"])
+            identity_nodes.append((str(node_id), node))
+    numeric_ids = [int(key) for key in workflow if str(key).isdigit()]
+    next_node_id = max(numeric_ids, default=0) + 1
+    for _, identity_node in identity_nodes:
+        model_link = identity_node["inputs"].get("model")
+        if not isinstance(model_link, list) or len(model_link) != 2:
+            raise ValueError("Each LoRA Lab Identity Loader must have a connected MODEL input.")
+        for aux in run.get("aux_loras") or []:
+            aux_id = str(next_node_id)
+            next_node_id += 1
+            workflow[aux_id] = {
+                "class_type": "LoRALabIdentityLoader",
+                "inputs": {
+                    "model": model_link,
+                    "lora_name": aux["filename"],
+                    "strength_model": float(aux["strength"]),
+                },
+            }
+            model_link = [aux_id, 0]
+        identity_node["inputs"]["model"] = model_link
     image_link = None
     output_node_id = str(run.get("api_output_node_id") or "").strip()
     if output_node_id:
@@ -792,8 +853,7 @@ def _custom_job_prompt(run: dict, scenario: dict, candidate: dict, candidate_ind
                     break
     if image_link is None:
         raise ValueError("Custom workflow output was not found. Add PreviewImage/SaveImage or enter an IMAGE output node ID.")
-    numeric_ids = [int(key) for key in workflow if str(key).isdigit()]
-    collector_id = str(max(numeric_ids, default=0) + 1)
+    collector_id = str(next_node_id)
     workflow[collector_id] = {
         "class_type": "LoRATestGridCollector",
         "inputs": {
@@ -922,6 +982,20 @@ def _job_prompt(run: dict, scenario: dict, candidate: dict, candidate_index: int
             },
         }
         workflow["4"]["inputs"]["model"] = [turbo_node_id, 0]
+        loader_model_link = [turbo_node_id, 0]
+        next_patch_id += 1
+    for aux in run.get("aux_loras") or []:
+        aux_node_id = str(next_patch_id)
+        workflow[aux_node_id] = {
+            "class_type": "LoRALabIdentityLoader",
+            "inputs": {
+                "model": loader_model_link,
+                "lora_name": aux["filename"],
+                "strength_model": float(aux["strength"]),
+            },
+        }
+        loader_model_link = [aux_node_id, 0]
+        workflow["4"]["inputs"]["model"] = loader_model_link
         next_patch_id += 1
     model_link = ["4", 0]
     candidate_patches = candidate.get("model_patches") if "model_patches" in candidate else run.get("model_patches")
@@ -955,6 +1029,109 @@ def _completed_keys(run: dict) -> set[str]:
 
 def _queue_depth(payload: dict) -> int:
     return len(payload.get("queue_running") or []) + len(payload.get("queue_pending") or [])
+
+
+def _owned_queue_ids(queue: dict, run_id: str) -> tuple[set[str], set[str]]:
+    running_ids = set()
+    pending_ids = set()
+    for key, destination in (("queue_running", running_ids), ("queue_pending", pending_ids)):
+        for item in queue.get(key) or []:
+            if not isinstance(item, (list, tuple)) or len(item) < 4:
+                continue
+            extra_data = item[3] if isinstance(item[3], dict) else {}
+            if str(extra_data.get("loralab_run_id") or "") == run_id:
+                destination.add(str(item[1]))
+    return running_ids, pending_ids
+
+
+def _request_resource_cleanup() -> bool:
+    analyzer_released = False
+    try:
+        from . import release_analyzer_resources
+        release_analyzer_resources()
+        analyzer_released = True
+    except Exception:
+        pass
+    if PromptServer is None:
+        return analyzer_released
+    try:
+        queue = PromptServer.instance.prompt_queue
+        queue.set_flag("unload_models", True)
+        queue.set_flag("free_memory", True)
+        return True
+    except Exception:
+        return analyzer_released
+
+
+async def _stop_run_queue(run_id: str, base_url: str) -> dict:
+    task = _QUEUE_TASKS.get(run_id)
+    if task is not None and not task.done():
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    run = _read_run(run_id)
+    known_ids = {str(item) for item in run.get("submitted_prompt_ids", []) if item}
+    running_ids = set()
+    pending_ids = set()
+    cancel_error = None
+    if ClientSession is not None:
+        async with ClientSession(timeout=ClientTimeout(total=30)) as session:
+            async def post_json(path: str, payload: dict) -> int:
+                async with session.post(f"{base_url}{path}", json=payload) as response:
+                    await response.read()
+                    return response.status
+
+            try:
+                async with session.get(f"{base_url}/queue") as response:
+                    queue = await response.json()
+                running_ids, pending_ids = _owned_queue_ids(queue, run_id)
+                all_ids = sorted(known_ids | running_ids | pending_ids)
+                if all_ids:
+                    status = await post_json("/api/jobs/cancel", {"job_ids": all_ids})
+                    if status >= 400:
+                        raise RuntimeError(f"Batch cancellation returned HTTP {status}")
+            except Exception as exc:
+                cancel_error = f"{type(exc).__name__}: {exc}"
+                if pending_ids:
+                    with contextlib.suppress(Exception):
+                        await post_json("/queue", {"delete": sorted(pending_ids)})
+                for prompt_id in running_ids:
+                    with contextlib.suppress(Exception):
+                        await post_json("/interrupt", {"prompt_id": prompt_id})
+
+            remaining_running = set(running_ids)
+            remaining_pending = set(pending_ids)
+            deadline = time.monotonic() + 8.0
+            while time.monotonic() < deadline:
+                await asyncio.sleep(0.25)
+                try:
+                    async with session.get(f"{base_url}/queue") as response:
+                        queue = await response.json()
+                    remaining_running, remaining_pending = _owned_queue_ids(queue, run_id)
+                except Exception:
+                    break
+                if not remaining_running and not remaining_pending:
+                    break
+                if remaining_pending:
+                    with contextlib.suppress(Exception):
+                        await post_json("/queue", {"delete": sorted(remaining_pending)})
+                for prompt_id in remaining_running:
+                    with contextlib.suppress(Exception):
+                        await post_json("/interrupt", {"prompt_id": prompt_id})
+            with contextlib.suppress(Exception):
+                await post_json("/free", {"unload_models": True, "free_memory": True})
+    else:
+        remaining_running = running_ids
+        remaining_pending = pending_ids
+
+    cleanup_requested = _request_resource_cleanup()
+    return {
+        "cancelled_prompt_ids": sorted(known_ids | running_ids | pending_ids),
+        "remaining_prompt_ids": sorted(remaining_running | remaining_pending),
+        "cleanup_requested": cleanup_requested,
+        "cancel_error": cancel_error,
+    }
 
 
 async def _queue_run(run_id: str, base_url: str, client_id: str | None = None) -> None:
@@ -1043,6 +1220,9 @@ def _run_progress(run: dict, include_cells: bool = True) -> dict:
     total = int(run["expected_cells"])
     if len(completed) >= total and run["status"] not in {"cancelled"}:
         run["status"] = "complete"
+        if run.get("auto_cleanup") and not run.get("resources_released_at"):
+            run["resources_released_at"] = _now_iso()
+            run["resource_cleanup_requested"] = _request_resource_cleanup()
         _write_run(run)
     cells = []
     if include_cells:
@@ -1674,7 +1854,7 @@ def _bootstrap_ci(values: list[float], rng: np.random.Generator, iterations: int
 
 
 def _analyze_sync(run_id: str, reference_folder: str | None = None) -> dict:
-    from . import _face_embedding, _get_face_app, _identity_similarity, _quality_metrics, _robust_reference_template
+    from . import _face_embedding, _get_face_app, _identity_similarity, _quality_metrics, _robust_reference_template, release_analyzer_resources
     from .cvlface_analyzer import get_analyzer as _get_cvlface, ready_details as _cvlface_ready, release_cuda as _release_cvlface, robust_template as _cvlface_template, similarity as _cvlface_similarity
 
     run = _read_run(run_id)
@@ -1705,35 +1885,40 @@ def _analyze_sync(run_id: str, reference_folder: str | None = None) -> dict:
     ratings = _read_ratings(run_id).get("ratings", {})
     entries = []
     by_candidate: dict[int, list[dict]] = defaultdict(list)
-    for p, scenario in enumerate(run["scenarios"]):
-        for l, candidate in enumerate(run["candidates"]):
-            path = _cell_path(run_id, p, l)
-            embedding = _face_embedding(path, face_app)
-            antelope_similarity = _identity_similarity(embedding, template) if embedding is not None else None
-            cvl_record = cvlface.embedding(path, face_app) if cvlface is not None else None
-            cvl_metrics = _cvlface_similarity(cvl_record, cvl_template) if cvl_record is not None and cvl_template is not None else None
-            quality = _quality_metrics(path)
-            rating = ratings.get(_job_key(p, l), {})
-            entry = {
-                "prompt_index": p,
-                "lora_index": l,
-                "key": _job_key(p, l),
-                "candidate": candidate,
-                "scenario": scenario,
-                "face_detected": antelope_similarity is not None or cvl_metrics is not None,
-                "identity_similarity": None,
-                "antelope_similarity": antelope_similarity,
-                "kprpe_similarity": cvl_metrics.get("similarity") if cvl_metrics else None,
-                "identity_confidence": cvl_metrics.get("quality") if cvl_metrics else None,
-                "kprpe_metrics": cvl_metrics,
-                "quality_metrics": quality,
-                "rating": rating,
-                "asset_url": f"/loralab/v1/asset?run_id={run_id}&path=_cells/{path.name}",
-            }
-            entries.append(entry)
-            by_candidate[l].append(entry)
-
-    _release_cvlface()
+    try:
+        for p, scenario in enumerate(run["scenarios"]):
+            for l, candidate in enumerate(run["candidates"]):
+                path = _cell_path(run_id, p, l)
+                embedding = _face_embedding(path, face_app)
+                antelope_similarity = _identity_similarity(embedding, template) if embedding is not None else None
+                cvl_record = cvlface.embedding(path, face_app) if cvlface is not None else None
+                cvl_metrics = _cvlface_similarity(cvl_record, cvl_template) if cvl_record is not None and cvl_template is not None else None
+                quality = _quality_metrics(path)
+                rating = ratings.get(_job_key(p, l), {})
+                entry = {
+                    "prompt_index": p,
+                    "lora_index": l,
+                    "key": _job_key(p, l),
+                    "candidate": candidate,
+                    "scenario": scenario,
+                    "face_detected": antelope_similarity is not None or cvl_metrics is not None,
+                    "identity_similarity": None,
+                    "antelope_similarity": antelope_similarity,
+                    "kprpe_similarity": cvl_metrics.get("similarity") if cvl_metrics else None,
+                    "identity_confidence": cvl_metrics.get("quality") if cvl_metrics else None,
+                    "kprpe_metrics": cvl_metrics,
+                    "quality_metrics": quality,
+                    "rating": rating,
+                    "asset_url": f"/loralab/v1/asset?run_id={run_id}&path=_cells/{path.name}",
+                }
+                entries.append(entry)
+                by_candidate[l].append(entry)
+    finally:
+        _release_cvlface()
+        template.pop("face_app", None)
+        face_app = None
+        cvlface = None
+        release_analyzer_resources()
 
     def calibrate(values: list[float | None]) -> tuple[list[float | None], dict]:
         finite = np.asarray([float(value) for value in values if value is not None and math.isfinite(float(value))], dtype=np.float64)
@@ -2279,16 +2464,34 @@ if PromptServer is not None and web is not None:
                 run["status"] = "queueing"
                 _write_run(run)
                 _start_queue_task(run_id, base_url, payload.get("client_id"))
-            elif action == "cancel":
+            elif action in {"cancel", "stop"}:
                 run["status"] = "cancelled"
                 _write_run(run)
-                ids = list(run.get("submitted_prompt_ids", []))
-                if ids and ClientSession is not None:
-                    async with ClientSession(timeout=ClientTimeout(total=30)) as session:
-                        await session.post(f"{base_url}/api/jobs/cancel", json={"job_ids": ids})
+                stop_result = await _stop_run_queue(run_id, base_url)
+                run = _read_run(run_id)
+                run["stopped_at"] = _now_iso()
+                run["stop_result"] = stop_result
+                run["resources_released_at"] = _now_iso()
+                run["resource_cleanup_requested"] = bool(stop_result["cleanup_requested"])
+                _write_run(run)
+            elif action == "free":
+                requested = _request_resource_cleanup()
+                if ClientSession is not None:
+                    async with ClientSession(timeout=ClientTimeout(total=10)) as session:
+                        with contextlib.suppress(Exception):
+                            async with session.post(f"{base_url}/free", json={"unload_models": True, "free_memory": True}) as response:
+                                await response.read()
+                run["resources_released_at"] = _now_iso()
+                run["resource_cleanup_requested"] = requested
+                _write_run(run)
             else:
                 raise ValueError(f"Unknown action: {action}")
-            return web.json_response({"ok": True, "status": run["status"]})
+            return web.json_response({
+                "ok": True,
+                "status": run["status"],
+                "stop_result": run.get("stop_result"),
+                "resource_cleanup_requested": run.get("resource_cleanup_requested", False),
+            })
         except Exception as exc:
             return web.json_response({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status=400)
 

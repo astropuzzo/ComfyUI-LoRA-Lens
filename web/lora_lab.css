@@ -528,3 +528,7 @@
   .ll-objective-grid { grid-template-columns: 1fr; }
   .ll-objective-footer { align-items: stretch; flex-direction: column; }
 }
+.ll-aux-editor{border:1px solid var(--ll-border);border-radius:10px;padding:10px;background:color-mix(in srgb,var(--ll-panel) 84%,transparent)}
+.ll-aux-row{display:grid;grid-template-columns:34px minmax(220px,1fr) 90px 34px 34px 34px;gap:6px;align-items:center;margin:6px 0}
+.ll-aux-row .ll-icon-btn{width:32px;height:32px}
+@media(max-width:760px){.ll-aux-row{grid-template-columns:30px minmax(0,1fr) 78px}.ll-aux-row .ll-icon-btn{grid-row:2}}

@@ -37,10 +37,29 @@ except Exception:
     pass
 
 
-PLUGIN_VERSION = "7.0.0"
+PLUGIN_VERSION = "7.1.0"
 _GRID_LOCK = threading.Lock()
 _FACE_APP = None
 _FACE_APP_ERROR = None
+
+
+def release_analyzer_resources():
+    """Drop persistent GPU-backed face sessions and clear allocator caches."""
+    global _FACE_APP
+    _FACE_APP = None
+    try:
+        from .cvlface_analyzer import release_cuda
+        release_cuda()
+    except Exception:
+        pass
+    try:
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception:
+        pass
 
 
 def _available_loras():

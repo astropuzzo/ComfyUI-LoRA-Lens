@@ -73,6 +73,7 @@ const state = {
     turboLora: false,
     turboLoraName: "",
     turboLoraStrength: 1.0,
+    auxLoras: [],
     steps: 8,
     cfg: 1,
     sampler: "euler",
@@ -427,8 +428,37 @@ function modelStackProblems() {
   if (currentProfile()?.missing?.length) problems.push(`Missing profile prerequisites: ${currentProfile().missing.join(" · ")}`);
   if (state.form.turboLora && model.includes("turbo")) problems.push("Turbo model + Turbo LoRA would apply acceleration twice. Use a Raw model.");
   if (state.form.turboLora && state.selected.has(state.form.turboLoraName)) problems.push("Turbo LoRA is also selected as a checkpoint candidate. Remove duplicate.");
+  const auxFiles = state.form.auxLoras.map((item) => item.filename).filter(Boolean);
+  if (state.form.auxLoras.some((item) => !item.filename)) problems.push("Select a file for every always-on auxiliary LoRA.");
+  if (new Set(auxFiles).size !== auxFiles.length) problems.push("The always-on auxiliary stack contains a duplicate LoRA.");
+  if (state.form.turboLora && auxFiles.includes(state.form.turboLoraName)) problems.push("Turbo LoRA is duplicated in the auxiliary stack.");
+  const duplicateCandidate = auxFiles.find((filename) => state.selected.has(filename));
+  if (duplicateCandidate) problems.push(`Auxiliary LoRA is also selected as a checkpoint candidate: ${shortFile(duplicateCandidate)}`);
   if (["stack_compare","enhancer_compare"].includes(state.form.mode) && state.selected.size !== 1) problems.push("This objective requires exactly one selected identity LoRA.");
   return problems;
+}
+
+function renderAuxLoras() {
+  const rows = state.form.auxLoras.map((item, index) => `
+    <div class="ll-aux-row" data-aux-row="${index}">
+      <span class="ll-step">#${index + 1}</span>
+      <select class="ll-select ll-aux-file" data-aux-file="${index}">
+        <option value="">Select an installed LoRA…</option>
+        ${(state.boot.loras || []).map((entry) => `<option value="${esc(entry.filename)}" ${entry.filename === item.filename ? "selected" : ""}>${esc(entry.filename)}</option>`).join("")}
+      </select>
+      <input class="ll-input ll-aux-strength" data-aux-strength="${index}" type="number" min="-2" max="2" step="0.05" value="${esc(item.strength)}" title="Model strength">
+      <button class="ll-icon-btn ll-move-aux" data-index="${index}" data-direction="-1" title="Move earlier" ${index === 0 ? "disabled" : ""}><i class="pi pi-angle-up"></i></button>
+      <button class="ll-icon-btn ll-move-aux" data-index="${index}" data-direction="1" title="Move later" ${index === state.form.auxLoras.length - 1 ? "disabled" : ""}><i class="pi pi-angle-down"></i></button>
+      <button class="ll-icon-btn ll-remove-aux" data-index="${index}" title="Remove auxiliary LoRA"><i class="pi pi-times"></i></button>
+    </div>
+  `).join("");
+  return `
+    <div class="ll-field ll-aux-editor">
+      <label class="ll-label">Always-on auxiliary LoRAs ${help("Applied in this exact order before every candidate checkpoint. The control column keeps this stack but removes the candidate, making comparisons fair.")}</label>
+      ${rows || `<div class="ll-hint">No auxiliary LoRAs. Add acceleration, style, detail, or compatibility LoRAs that every generated cell must share.</div>`}
+      <div class="ll-toolbar"><button class="ll-btn small" id="ll-add-aux" ${state.form.auxLoras.length >= 8 ? "disabled" : ""}><i class="pi pi-plus"></i> Add auxiliary LoRA</button><span class="ll-hint">${state.form.auxLoras.length}/8 · order matters</span></div>
+    </div>
+  `;
 }
 
 function renderModelStack() {
@@ -436,6 +466,7 @@ function renderModelStack() {
   const nodes = [
     ["Base", shortFile(state.form.modelName, 31)],
     ["Turbo", state.form.mode === "stack_compare" ? "Compared Off / On" : state.form.turboLora ? `On · ${shortFile(state.form.turboLoraName, 25)}` : "Off"],
+    ["Auxiliary", state.form.auxLoras.length ? `${state.form.auxLoras.length} always on` : "None"],
     ["Identity", candidateText],
     ["Enhancer", state.form.mode === "enhancer_compare" ? "Off / Standard / Advanced" : state.form.enhancer === "off" ? "Off" : `${state.form.enhancer} · ${state.form.enhancerStrength}`],
     ["Sampler", `${state.form.steps} · CFG ${state.form.cfg} · ${state.form.sampler} / ${state.form.scheduler}`],
@@ -517,6 +548,7 @@ function renderSetup() {
                 <input type="checkbox" id="ll-turbo-lora" ${state.form.turboLora ? "checked" : ""} ${state.boot.turbo_lora?.available && state.form.mode !== "stack_compare" ? "" : "disabled"}>
                 <span><strong>Apply Krea 2 Turbo LoRA</strong><small>${state.form.mode === "stack_compare" ? "Managed per candidate by Raw vs Turbo objective." : state.boot.turbo_lora?.available ? (state.form.turboLora ? "Active · 8 steps · CFG 1 · Euler / beta · zero negative" : "One toggle. Applied before every checkpoint LoRA.") : "Turbo LoRA not installed"}</small></span>
               </label>` : `<div class="ll-note">${state.workflowAdapter === "api_template" ? "Acceleration and custom-node behavior come from the imported workflow." : `Acceleration mode: <strong>${esc(profile?.acceleration || "None")}</strong>. Choose another variant above for a native Turbo/Schnell workflow.`}</div>`}
+              ${renderAuxLoras()}
               ${renderModelStack()}
               <div class="ll-field">
                 <label class="ll-label">Evaluation mode ${help("Compare ranks different checkpoints at one strength. Strength sweep applies one checkpoint at several strengths after checkpoint selection.")}</label>
@@ -533,7 +565,7 @@ function renderSetup() {
                   <div class="ll-hint">${esc(preset?.description || "")}</div>
                 </div>
                 <div class="ll-field">
-                  <label class="ll-label">${state.form.turboLora ? "Turbo-only control" : "No-LoRA control"} ${help(state.form.turboLora ? "Control uses Turbo LoRA but no identity checkpoint LoRA." : "Generates same prompt and seed without identity LoRA.")}</label>
+                  <label class="ll-label">${state.form.turboLora || state.form.auxLoras.length ? "Always-on stack control" : "No-LoRA control"} ${help(state.form.turboLora || state.form.auxLoras.length ? "Control keeps Turbo and auxiliary LoRAs but removes the candidate checkpoint." : "Generates the same prompt and seed without a candidate LoRA.")}</label>
                   <label class="ll-check" style="min-height:35px"><input type="checkbox" id="ll-baseline" ${state.form.includeBaseline ? "checked" : ""}> Include control column</label>
                 </div>
               </div>
@@ -706,7 +738,8 @@ function renderMonitor() {
           <div class="ll-progress-controls">
             ${progress.status === "paused" ? `<button class="ll-btn primary" data-run-action="resume"><i class="pi pi-play"></i> Resume</button>` : `<button class="ll-btn" data-run-action="pause"><i class="pi pi-pause"></i> Pause submissions</button>`}
             <button class="ll-btn" data-run-action="retry"><i class="pi pi-refresh"></i> Retry missing</button>
-            <button class="ll-btn danger" data-run-action="cancel"><i class="pi pi-stop"></i> Cancel queued</button>
+            <button class="ll-btn danger" data-run-action="stop"><i class="pi pi-stop"></i> Stop run now</button>
+            <button class="ll-btn" data-run-action="free"><i class="pi pi-trash"></i> Release VRAM</button>
             <button class="ll-btn primary" id="ll-analyze" ${canAnalyze ? "" : "disabled"}><i class="pi pi-chart-line"></i> Analyze completed run</button>
           </div>
         </article>
@@ -717,6 +750,7 @@ function renderMonitor() {
               <tr><th>Objective</th><td>${esc(run.objective || "custom")}</td></tr>
               <tr><th>Base model</th><td>${esc(run.model_name)}</td></tr>
               <tr><th>Turbo LoRA</th><td>${run.turbo_lora?.enabled ? `${esc(run.turbo_lora.filename)} · ${Number(run.turbo_lora.strength).toFixed(2)}` : "Off"}</td></tr>
+              <tr><th>Auxiliary LoRAs</th><td>${run.aux_loras?.length ? run.aux_loras.map((item) => `${esc(item.filename)} · ${Number(item.strength).toFixed(2)}`).join("<br>") : "None"}</td></tr>
               <tr><th>Sampling</th><td>${run.profile.steps} steps · CFG ${run.profile.cfg} · ${esc(run.profile.sampler)} / ${esc(run.profile.scheduler)}</td></tr>
               <tr><th>Seeds</th><td>${run.seeds.map(esc).join(", ")}</td></tr>
               <tr><th>Reference</th><td>${esc(run.reference_folder)}</td></tr>
@@ -724,7 +758,7 @@ function renderMonitor() {
               <tr><th>Subject/class</th><td>${esc(run.subject_class || "—")}</td></tr>
               <tr><th>Created</th><td>${esc(run.created_at)}</td></tr>
             </tbody></table></div>
-            ${errors.length ? `<div class="ll-error" style="margin-top:10px">${errors.slice(-3).map((item) => `${item.job}: ${item.error}`).join("\n")}</div>` : `<div class="ll-note" style="margin-top:10px">Queue throttles to three active/pending jobs. Closing this window does not stop backend submission.</div>`}
+            ${errors.length ? `<div class="ll-error" style="margin-top:10px">${errors.slice(-3).map((item) => `${item.job}: ${item.error}`).join("\n")}</div>` : `<div class="ll-note" style="margin-top:10px">Stop cancels this run's submitter, pending prompts and active prompt, then requests model unload and VRAM cleanup. Closing this window alone does not stop backend submission.</div>`}
           </div>
         </article>
       </div>
@@ -1056,6 +1090,14 @@ function syncSetupInputs() {
   if (get("ll-enhancer-strength")) state.form.enhancerStrength = Number(get("ll-enhancer-strength").value);
   if (get("ll-enhancer-text-scale")) state.form.enhancerTextScale = Number(get("ll-enhancer-text-scale").value);
   if (get("ll-custom-patches")) state.form.customPatches = get("ll-custom-patches").value;
+  document.querySelectorAll("[data-aux-file]").forEach((element) => {
+    const index = Number(element.dataset.auxFile);
+    if (state.form.auxLoras[index]) state.form.auxLoras[index].filename = element.value;
+  });
+  document.querySelectorAll("[data-aux-strength]").forEach((element) => {
+    const index = Number(element.dataset.auxStrength);
+    if (state.form.auxLoras[index]) state.form.auxLoras[index].strength = Number(element.value);
+  });
   if (get("ll-prompt-import")) state.promptImportText = get("ll-prompt-import").value;
   if (get("ll-suite-name")) state.promptSuiteName = get("ll-suite-name").value;
   if (get("ll-reuse-run")) state.reuseRunId = get("ll-reuse-run").value;
@@ -1245,6 +1287,24 @@ function bindSetup() {
     }
     renderShell();
   });
+  document.getElementById("ll-add-aux")?.addEventListener("click", () => {
+    syncSetupInputs();
+    if (state.form.auxLoras.length < 8) state.form.auxLoras.push({ filename: "", strength: 1.0 });
+    renderShell();
+  });
+  document.querySelectorAll(".ll-remove-aux").forEach((button) => button.addEventListener("click", () => {
+    syncSetupInputs();
+    state.form.auxLoras.splice(Number(button.dataset.index), 1);
+    renderShell();
+  }));
+  document.querySelectorAll(".ll-move-aux").forEach((button) => button.addEventListener("click", () => {
+    syncSetupInputs();
+    const index = Number(button.dataset.index);
+    const target = index + Number(button.dataset.direction);
+    if (target >= 0 && target < state.form.auxLoras.length) [state.form.auxLoras[index], state.form.auxLoras[target]] = [state.form.auxLoras[target], state.form.auxLoras[index]];
+    renderShell();
+  }));
+  document.querySelectorAll(".ll-aux-file,.ll-aux-strength").forEach((control) => control.addEventListener("change", () => { syncSetupInputs(); renderShell(); }));
   document.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", () => { syncSetupInputs(); state.form.mode = button.dataset.mode; state.objective = state.form.mode === "strength" ? "best_strength" : "best_checkpoint"; if (state.form.mode === "strength" && state.selected.size > 1) state.selected = new Set([...state.selected].slice(-1)); renderShell(); }));
   document.getElementById("ll-preset")?.addEventListener("change", (event) => { syncSetupInputs(); applyPreset(event.target.value, true); renderShell(); });
   document.getElementById("ll-baseline")?.addEventListener("change", (event) => { state.form.includeBaseline = event.target.checked; renderShell(); });
@@ -1388,6 +1448,7 @@ function buildPlanPayload(selectedOverride = null) {
       clip_name_2: state.form.clipName2,
       vae_name: state.form.vaeName,
       turbo_lora: { enabled: state.form.turboLora, filename: state.form.turboLoraName, strength: state.form.turboLoraStrength },
+      aux_loras: state.form.auxLoras.map((item) => ({ enabled: true, filename: item.filename, strength: item.strength })),
       mode: state.form.mode,
       selected_loras: selectedOverride == null ? [...state.selected] : selectedOverride,
       trigger: state.form.trigger,
@@ -1442,13 +1503,20 @@ async function refreshRun(render = true) {
 
 async function runAction(action) {
   if (!state.currentRunId) return;
-  if (action === "cancel") {
-    const confirmed = await confirmAction("Cancel LoRA Lab run", "Cancel currently queued/running jobs for this run? Completed images remain reusable.");
+  if (action === "stop") {
+    const confirmed = await confirmAction("Stop LoRA Lens run", "Stop submission, remove this run's pending prompts, interrupt its active prompt, and release model memory? Completed images remain reusable.");
     if (!confirmed) return;
   }
   try {
-    await jsonFetch("/loralab/v1/status", { method: "POST", body: { run_id: state.currentRunId, action, client_id: api.clientId } });
-    toast("Run updated", action, "info");
+    const result = await jsonFetch("/loralab/v1/status", { method: "POST", body: { run_id: state.currentRunId, action, client_id: api.clientId } });
+    if (action === "stop") {
+      const remaining = result.stop_result?.remaining_prompt_ids?.length || 0;
+      toast(remaining ? "Stop still settling" : "Run fully stopped", remaining ? `${remaining} prompt(s) still exiting; no new work will be submitted.` : "Queue cleared and VRAM cleanup requested.", remaining ? "warning" : "success");
+    } else if (action === "free") {
+      toast("VRAM cleanup requested", "ComfyUI will unload models and clear its execution cache.", "success");
+    } else {
+      toast("Run updated", action, "info");
+    }
     await refreshRun(true);
   } catch (error) {
     state.error = error.message;

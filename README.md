@@ -64,6 +64,14 @@ Restart ComfyUI. The analyser installer continues non-blocking in the background
 4. Enter the exact trigger token or phrase. An optional subject/class is never inserted unless you type it.
 5. Review the resolved prompts, matched seeds, resolution, and sampling values.
 6. Include a no-LoRA baseline, then create the run.
+
+Always-on acceleration, style, detail, or compatibility LoRAs can be added as
+an ordered auxiliary stack. They are applied identically to every candidate and
+remain active in the control column, so the checkpoint comparison stays fair.
+
+**Stop run now** cancels this run's submitter, removes its pending prompts,
+interrupts its active prompt, and requests model/VRAM cleanup. **Release VRAM**
+can repeat the cleanup manually without restarting ComfyUI.
 7. Review automatic identity ranking and complete the blind pairwise tournament.
 8. Retest only the finalists with more seeds at the model's native resolution.
 
