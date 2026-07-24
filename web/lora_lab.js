@@ -5,6 +5,7 @@ const EXTENSION_NAME = "LoRALens.V7";
 const SIDEBAR_ID = "lora-lab-v5";
 const DIRECT_OPEN_KEY = "loralab.directOpen";
 const PROMPT_SUITES_KEY = "loralab.promptSuites.v1";
+const SETUP_PRESETS_KEY = "loralab.setupPresets.v1";
 
 const OBJECTIVES = [
   { id: "best_checkpoint", name: "Best checkpoint", icon: "pi-chart-line", description: "Coarse matched screening across saved checkpoints.", requirement: "Select one or more checkpoints" },
@@ -35,8 +36,12 @@ const state = {
   promptImportText: "",
   promptSuiteName: "",
   promptSuites: {},
+  setupPresetName: "",
+  setupPresets: {},
+  confirmDialog: null,
   reuseRunId: "",
   showAdvancedStack: false,
+  fullscreen: false,
   objective: "best_checkpoint",
   viewer: null,
   blind: true,
@@ -45,6 +50,8 @@ const state = {
   matrixCategory: "all",
   revealAutomatic: false,
   directOpen: localStorage.getItem(DIRECT_OPEN_KEY) !== "false",
+  scrollPositions: {},
+  renderSerial: 0,
   modelCategory: "all",
   workflowAdapter: "native",
   apiWorkflow: "",
@@ -163,6 +170,13 @@ function toast(summary, detail = "", severity = "info") {
 }
 
 async function confirmAction(title, message) {
+  if (state.overlay) {
+    if (state.confirmDialog) finishConfirm(false);
+    return new Promise((resolve) => {
+      state.confirmDialog = { title, message, resolve };
+      renderConfirmation();
+    });
+  }
   try {
     return await app.extensionManager.dialog.confirm({ title, message });
   } catch {
@@ -267,6 +281,7 @@ async function loadBootstrap(force = false) {
     .then((data) => {
       state.boot = data;
       try { state.promptSuites = JSON.parse(localStorage.getItem(PROMPT_SUITES_KEY) || "{}"); } catch { state.promptSuites = {}; }
+      try { state.setupPresets = JSON.parse(localStorage.getItem(SETUP_PRESETS_KEY) || "{}"); } catch { state.setupPresets = {}; }
       if (!state.form.turboLoraName) state.form.turboLoraName = data.defaults?.turbo_lora || "";
       if (!state.prompts.length) {
         state.form.trigger = data.defaults?.trigger || state.form.trigger;
@@ -295,8 +310,30 @@ function headerStatus() {
   `;
 }
 
+function captureScrollPositions() {
+  if (!state.overlay) return;
+  state.overlay.querySelectorAll("[data-ll-scroll-key]").forEach((element) => {
+    state.scrollPositions[element.dataset.llScrollKey] = {
+      top: element.scrollTop,
+      left: element.scrollLeft,
+    };
+  });
+}
+
+function restoreScrollPositions(serial) {
+  if (!state.overlay || serial !== state.renderSerial) return;
+  state.overlay.querySelectorAll("[data-ll-scroll-key]").forEach((element) => {
+    const position = state.scrollPositions[element.dataset.llScrollKey];
+    if (!position) return;
+    element.scrollTop = position.top;
+    element.scrollLeft = position.left;
+  });
+}
+
 function renderShell() {
   if (!state.overlay) return;
+  captureScrollPositions();
+  const renderSerial = ++state.renderSerial;
   const pages = [
     ["setup", "pi pi-sliders-h", "Test setup"],
     ["run", "pi pi-bolt", "Run monitor"],
@@ -310,17 +347,53 @@ function renderShell() {
         <div class="ll-titlebox"><div class="ll-title">LoRA Lens</div><div class="ll-subtitle">Model-aware LoRA checkpoint evaluation · v${esc(state.boot?.version || "7")}</div></div>
         <div class="ll-header-spacer"></div>
         ${headerStatus()}
+        <button class="ll-icon-btn" id="ll-fullscreen" title="${state.fullscreen ? "Exit fullscreen" : "Enter fullscreen"}" aria-label="${state.fullscreen ? "Exit fullscreen" : "Enter fullscreen"}" aria-pressed="${state.fullscreen}"><i class="pi ${state.fullscreen ? "pi-window-minimize" : "pi-window-maximize"}"></i></button>
         <button class="ll-icon-btn" id="ll-refresh" title="Refresh catalog and runs"><i class="pi pi-refresh"></i></button>
         <button class="ll-icon-btn" id="ll-close" title="Close LoRA Lab"><i class="pi pi-times"></i></button>
       </header>
       <nav class="ll-tabs">
         ${pages.map(([id, icon, label]) => `<button class="ll-tab ${state.page === id ? "active" : ""}" data-page="${id}"><i class="${icon}"></i>${label}</button>`).join("")}
       </nav>
-      <main class="ll-main" id="ll-content">${renderPage()}</main>
+      <main class="ll-main" id="ll-content" data-ll-scroll-key="${esc(`${state.page}:main`)}">${renderPage()}</main>
     </div>
   `;
   bindShell();
   bindPage();
+  restoreScrollPositions(renderSerial);
+  requestAnimationFrame(() => restoreScrollPositions(renderSerial));
+  if (state.viewer) renderViewer();
+  if (state.confirmDialog) renderConfirmation();
+}
+
+function finishConfirm(confirmed) {
+  const dialog = state.confirmDialog;
+  state.confirmDialog = null;
+  document.getElementById("ll-confirm")?.remove();
+  dialog?.resolve(Boolean(confirmed));
+}
+
+function renderConfirmation() {
+  if (!state.overlay || !state.confirmDialog) return;
+  document.getElementById("ll-confirm")?.remove();
+  const layer = document.createElement("div");
+  layer.id = "ll-confirm";
+  layer.className = "ll-confirm-layer";
+  layer.innerHTML = `
+    <section class="ll-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="ll-confirm-title" aria-describedby="ll-confirm-message">
+      <div class="ll-confirm-icon"><i class="pi pi-exclamation-triangle"></i></div>
+      <h2 id="ll-confirm-title">${esc(state.confirmDialog.title)}</h2>
+      <p id="ll-confirm-message">${esc(state.confirmDialog.message)}</p>
+      <div class="ll-confirm-actions">
+        <button class="ll-btn ghost" id="ll-confirm-cancel">Cancel</button>
+        <button class="ll-btn danger" id="ll-confirm-accept">Confirm</button>
+      </div>
+    </section>
+  `;
+  layer.addEventListener("mousedown", (event) => { if (event.target === layer) finishConfirm(false); });
+  layer.querySelector("#ll-confirm-cancel")?.addEventListener("click", () => finishConfirm(false));
+  layer.querySelector("#ll-confirm-accept")?.addEventListener("click", () => finishConfirm(true));
+  state.overlay.appendChild(layer);
+  layer.querySelector("#ll-confirm-accept")?.focus();
 }
 
 function renderPage() {
@@ -497,6 +570,19 @@ function renderSetup() {
       <h1 class="ll-page-title">Build controlled test</h1>
       <p class="ll-page-lead">Use identical prompts and seeds across checkpoints. Baseline shows actual identity gain. Start coarse, then retest finalists with more seeds.</p>
       <label class="ll-check ll-direct-open"><input type="checkbox" id="ll-direct-open" ${state.directOpen ? "checked" : ""}> Open full dashboard directly from ComfyUI icon ${help("Enabled by default. Disable only if you prefer the compact sidebar first.")}</label>
+      <article class="ll-card ll-setup-presets">
+        <div class="ll-card-head"><div class="ll-card-title">Saved setup presets</div><div class="ll-card-sub">Restore the complete test configuration in one click</div></div>
+        <div class="ll-card-body">
+          <div class="ll-setup-preset-tools">
+            <input class="ll-input" id="ll-setup-preset-name" placeholder="Preset name, e.g. Krea 2 · identity final" value="${esc(state.setupPresetName)}">
+            <button class="ll-btn small" id="ll-save-setup-preset"><i class="pi pi-save"></i> Save current setup</button>
+            <select class="ll-select" id="ll-saved-setup-preset"><option value="">Saved setup presets…</option>${Object.keys(state.setupPresets).sort().map((name) => `<option value="${esc(name)}" ${name === state.setupPresetName ? "selected" : ""}>${esc(name)}</option>`).join("")}</select>
+            <button class="ll-btn small primary" id="ll-load-setup-preset"><i class="pi pi-folder-open"></i> Load</button>
+            <button class="ll-btn small danger" id="ll-delete-setup-preset"><i class="pi pi-trash"></i> Delete</button>
+          </div>
+          <div class="ll-hint">Saved locally in this browser. Includes workflow, model, LoRA stack, selected candidates, prompts, trigger, references, dimensions, seeds, sampling, enhancer and output settings.</div>
+        </div>
+      </article>
       <article class="ll-card ll-objective-wizard">
         <div class="ll-card-head"><div class="ll-card-title">Test-plan wizard</div><div class="ll-card-sub">Choose decision, then edit any generated setting</div></div>
         <div class="ll-card-body">
@@ -611,7 +697,7 @@ function renderSetup() {
                 <button class="ll-btn small" id="ll-select-range">Select step range</button>
                 <button class="ll-btn small ghost" id="ll-continue-screening">From latest run</button>
               </div>
-              <div class="ll-candidates" id="ll-candidate-list">${renderCandidates()}</div>
+              <div class="ll-candidates" id="ll-candidate-list" data-ll-scroll-key="setup:candidates">${renderCandidates()}</div>
               <div class="ll-selected-line"><span>${visibleCandidates().length} visible</span><span>${state.selected.size} selected</span></div>
               <div class="ll-watch-box ${groupWatcher?.active ? "active" : ""}">
                 <div><strong>OneTrainer checkpoint watcher</strong><span>${state.group ? groupWatcher?.active ? `Watching ${esc(state.group)} · ${groupWatcher.known_count} known · ${groupWatcher.run_ids.length} automatic runs` : `Watch new stable files added to ${esc(state.group)}. Existing files are ignored.` : "Choose one checkpoint group above."}</span></div>
@@ -635,11 +721,11 @@ function renderSetup() {
               <div class="ll-suite-tools">
                 <input class="ll-input" id="ll-suite-name" placeholder="Named prompt suite" value="${esc(state.promptSuiteName)}">
                 <button class="ll-btn small" id="ll-save-suite">Save suite</button>
-                <select class="ll-select" id="ll-saved-suite"><option value="">Saved suites…</option>${Object.keys(state.promptSuites).sort().map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join("")}</select>
+                <select class="ll-select" id="ll-saved-suite"><option value="">Saved suites…</option>${Object.keys(state.promptSuites).sort().map((name) => `<option value="${esc(name)}" ${name === state.promptSuiteName ? "selected" : ""}>${esc(name)}</option>`).join("")}</select>
                 <button class="ll-btn small" id="ll-load-suite">Load</button>
                 <button class="ll-btn small ghost" id="ll-delete-suite">Delete</button>
               </div>
-              <div class="ll-prompt-list" id="ll-prompt-list">${renderPromptList()}</div>
+              <div class="ll-prompt-list" id="ll-prompt-list" data-ll-scroll-key="setup:prompts">${renderPromptList()}</div>
               <div class="ll-toolbar" style="margin-top:9px;margin-bottom:0"><button class="ll-btn small" id="ll-add-prompt"><i class="pi pi-plus"></i> Add prompt</button>${state.promptMode === "preset" ? `<button class="ll-btn small ghost" id="ll-reset-prompts">Reset preset prompts</button>` : ""}<span class="ll-hint">${state.prompts.filter((item) => item.enabled !== false).length}/${state.prompts.length} enabled</span></div>
             </div>
           </article>
@@ -1048,6 +1134,83 @@ function persistPromptSuites() {
   localStorage.setItem(PROMPT_SUITES_KEY, JSON.stringify(state.promptSuites));
 }
 
+function cloneData(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function persistSetupPresets() {
+  localStorage.setItem(SETUP_PRESETS_KEY, JSON.stringify(state.setupPresets));
+}
+
+function savedItemName(selectId, inputId, collection) {
+  const typed = String(document.getElementById(inputId)?.value || "").trim();
+  const selected = String(document.getElementById(selectId)?.value || "").trim();
+  if (typed && Object.prototype.hasOwnProperty.call(collection, typed)) return typed;
+  if (selected && Object.prototype.hasOwnProperty.call(collection, selected)) return selected;
+  return "";
+}
+
+function snapshotSetupPreset() {
+  return {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    form: cloneData(state.form),
+    workflow: {
+      adapter: state.workflowAdapter,
+      apiWorkflow: state.apiWorkflow,
+      apiOutputNodeId: state.apiOutputNodeId,
+      apiOutputIndex: state.apiOutputIndex,
+      modelCategory: state.modelCategory,
+    },
+    objective: state.objective,
+    promptMode: state.promptMode,
+    prompts: cloneData(state.prompts),
+    selectedCandidates: [...state.selected],
+    candidateTools: {
+      group: state.group,
+      everyN: state.everyN,
+      stepMin: state.stepMin,
+      stepMax: state.stepMax,
+    },
+    showAdvancedStack: state.showAdvancedStack,
+  };
+}
+
+function restoreSetupPreset(preset) {
+  if (!preset || typeof preset !== "object" || !preset.form || typeof preset.form !== "object") {
+    throw new Error("This saved setup is invalid or belongs to an unsupported version.");
+  }
+  const savedForm = cloneData(preset.form);
+  state.form = { ...state.form, ...savedForm };
+  state.form.auxLoras = Array.isArray(savedForm.auxLoras)
+    ? savedForm.auxLoras.slice(0, 8).map((item) => ({ filename: String(item?.filename || ""), strength: Number(item?.strength ?? 1) }))
+    : [];
+
+  const workflow = preset.workflow || {};
+  state.workflowAdapter = ["native", "api_template"].includes(workflow.adapter) ? workflow.adapter : "native";
+  state.apiWorkflow = String(workflow.apiWorkflow || "");
+  state.apiOutputNodeId = String(workflow.apiOutputNodeId || "");
+  state.apiOutputIndex = Math.max(0, Number(workflow.apiOutputIndex) || 0);
+  state.modelCategory = String(workflow.modelCategory || "all");
+  state.objective = OBJECTIVES.some((item) => item.id === preset.objective) ? preset.objective : "best_checkpoint";
+  state.promptMode = ["preset", "custom", "import", "reuse"].includes(preset.promptMode) ? preset.promptMode : "custom";
+  state.prompts = Array.isArray(preset.prompts)
+    ? cloneData(preset.prompts).slice(0, 24).filter((item) => item && typeof item.text === "string")
+    : [];
+
+  const installed = new Set((state.boot?.loras || []).map((item) => item.filename));
+  const savedCandidates = Array.isArray(preset.selectedCandidates) ? preset.selectedCandidates.map(String) : [];
+  state.selected = new Set(savedCandidates.filter((filename) => installed.has(filename)));
+  const candidateTools = preset.candidateTools || {};
+  state.group = String(candidateTools.group || "");
+  state.everyN = Math.max(1, Number(candidateTools.everyN) || 1);
+  state.stepMin = candidateTools.stepMin ?? "";
+  state.stepMax = candidateTools.stepMax ?? "";
+  state.showAdvancedStack = Boolean(preset.showAdvancedStack);
+
+  return { missingCandidates: savedCandidates.length - state.selected.size };
+}
+
 function refreshConditioningPreviews() {
   const subject = [state.form.trigger.trim(), state.form.subjectClass.trim()].filter(Boolean).join(" ");
   const subjectResolution = document.getElementById("ll-subject-resolution");
@@ -1100,6 +1263,7 @@ function syncSetupInputs() {
   });
   if (get("ll-prompt-import")) state.promptImportText = get("ll-prompt-import").value;
   if (get("ll-suite-name")) state.promptSuiteName = get("ll-suite-name").value;
+  if (get("ll-setup-preset-name")) state.setupPresetName = get("ll-setup-preset-name").value;
   if (get("ll-reuse-run")) state.reuseRunId = get("ll-reuse-run").value;
   if (get("ll-step-min")) state.stepMin = get("ll-step-min").value;
   if (get("ll-step-max")) state.stepMax = get("ll-step-max").value;
@@ -1110,6 +1274,7 @@ function syncSetupInputs() {
 
 function bindShell() {
   document.getElementById("ll-close")?.addEventListener("click", closeLab);
+  document.getElementById("ll-fullscreen")?.addEventListener("click", toggleDashboardFullscreen);
   document.getElementById("ll-refresh")?.addEventListener("click", async () => {
     state.busy = "Refreshing catalog…";
     renderShell();
@@ -1235,7 +1400,10 @@ function renderViewer() {
   viewer.innerHTML = `<header class="ll-viewer-head"><div><strong>${esc(display)}</strong><span>${esc(item.promptLabel || "")}${item.seed == null ? "" : ` · seed ${esc(item.seed)}`}${state.viewer.blind || item.score == null ? "" : ` · ensemble ${Number(item.score).toFixed(3)} · KP-RPE ${item.kprpeScore == null ? "—" : Number(item.kprpeScore).toFixed(3)} · Antelope ${item.antelopeScore == null ? "—" : Number(item.antelopeScore).toFixed(3)}`}</span></div><div class="ll-viewer-tools"><button data-viewer-zoom="out" title="Zoom out">−</button><button data-viewer-zoom="fit" title="Fit image">Fit</button><button data-viewer-zoom="in" title="Zoom in">+</button><button id="ll-viewer-close" title="Close">×</button></div></header>
     <main class="ll-viewer-stage"><button class="ll-viewer-arrow left" data-viewer-nav="-1" aria-label="Previous image"><i class="pi pi-angle-left"></i></button><img class="ll-viewer-image" src="${esc(item.src)}" draggable="false"><button class="ll-viewer-arrow right" data-viewer-nav="1" aria-label="Next image"><i class="pi pi-angle-right"></i></button></main>
     <footer class="ll-viewer-foot"><div class="ll-viewer-meta"><span>${state.viewer.index + 1}/${state.viewer.items.length}</span><p>${esc(item.promptText || "")}</p><div class="ll-viewer-jumps"><button data-viewer-jump="candidate:-1">Previous candidate</button><button data-viewer-jump="candidate:1">Next candidate</button><button data-viewer-jump="prompt:-1">Previous prompt</button><button data-viewer-jump="prompt:1">Next prompt</button></div></div>${canRate ? `<div class="ll-viewer-ratings"><label>Identity<select data-viewer-rating="identity">${ratingOptions(rating.identity)}</select></label><label>Adherence<select data-viewer-rating="adherence">${ratingOptions(rating.adherence)}</select></label><label>Quality<select data-viewer-rating="quality">${ratingOptions(rating.quality)}</select></label><label class="ll-check"><input type="checkbox" data-viewer-rating="artifact" ${rating.artifact ? "checked" : ""}> Artifact</label></div>` : ""}</footer>`;
-  document.body.appendChild(viewer);
+  const viewerHost = state.overlay && (state.fullscreen || document.fullscreenElement === state.overlay)
+    ? state.overlay
+    : document.body;
+  viewerHost.appendChild(viewer);
   bindViewer(); updateViewerTransform();
   for (const offset of [-1, 1]) { const preload = new Image(); preload.src = state.viewer.items[(state.viewer.index + offset + state.viewer.items.length) % state.viewer.items.length].src; }
 }
@@ -1260,6 +1428,52 @@ function bindSetup() {
   document.getElementById("ll-direct-open")?.addEventListener("change", (event) => {
     state.directOpen = event.target.checked;
     localStorage.setItem(DIRECT_OPEN_KEY, String(state.directOpen));
+  });
+  document.getElementById("ll-saved-setup-preset")?.addEventListener("change", (event) => {
+    state.setupPresetName = event.target.value;
+    const input = document.getElementById("ll-setup-preset-name");
+    if (input) input.value = state.setupPresetName;
+  });
+  document.getElementById("ll-save-setup-preset")?.addEventListener("click", async () => {
+    syncSetupInputs();
+    const name = state.setupPresetName.trim();
+    if (!name) return toast("Preset name required", "Enter a name before saving the setup.", "error");
+    if (state.setupPresets[name]) {
+      const confirmed = await confirmAction("Replace saved setup?", `A setup named “${name}” already exists. Replace it with the current configuration?`);
+      if (!confirmed) return;
+    }
+    try {
+      state.setupPresets[name] = snapshotSetupPreset();
+      state.setupPresetName = name;
+      persistSetupPresets();
+      renderShell();
+      toast("Setup preset saved", `${name} · ${state.selected.size} candidates · ${state.prompts.length} prompts`, "success");
+    } catch (error) {
+      toast("Setup preset not saved", error.message, "error");
+    }
+  });
+  document.getElementById("ll-load-setup-preset")?.addEventListener("click", () => {
+    const name = savedItemName("ll-saved-setup-preset", "ll-setup-preset-name", state.setupPresets);
+    if (!name) return toast("Choose a saved setup", "Select it from the list or enter its exact saved name.", "error");
+    try {
+      const result = restoreSetupPreset(state.setupPresets[name]);
+      state.setupPresetName = name;
+      renderShell();
+      toast("Setup preset loaded", result.missingCandidates ? `${name} · ${result.missingCandidates} saved candidate(s) are no longer installed` : name, result.missingCandidates ? "warning" : "success");
+    } catch (error) {
+      toast("Setup preset not loaded", error.message, "error");
+    }
+  });
+  document.getElementById("ll-delete-setup-preset")?.addEventListener("click", async () => {
+    const name = savedItemName("ll-saved-setup-preset", "ll-setup-preset-name", state.setupPresets);
+    if (!name) return toast("Choose a saved setup", "Select it from the list or enter its exact saved name.", "error");
+    const confirmed = await confirmAction("Delete saved setup?", `Delete “${name}”? This cannot be undone.`);
+    if (!confirmed) return;
+    delete state.setupPresets[name];
+    persistSetupPresets();
+    if (state.setupPresetName === name) state.setupPresetName = "";
+    renderShell();
+    toast("Setup preset deleted", `${name} · current form values were left unchanged`, "info");
   });
   document.getElementById("ll-profile")?.addEventListener("change", (event) => { syncSetupInputs(); applyProfile(event.target.value); renderShell(); });
   document.querySelectorAll("[data-workflow-adapter]").forEach((button) => button.addEventListener("click", () => { syncSetupInputs(); state.workflowAdapter = button.dataset.workflowAdapter; if (state.workflowAdapter !== "native") state.form.turboLora = false; renderShell(); }));
@@ -1385,13 +1599,24 @@ function bindSetup() {
     syncSetupInputs(); const name = state.promptSuiteName.trim(); if (!name) return toast("Suite name required", "Enter a name before saving.", "error");
     state.promptSuites[name] = state.prompts.map((item) => ({ ...item })); persistPromptSuites(); renderShell(); toast("Prompt suite saved", name, "success");
   });
-  document.getElementById("ll-load-suite")?.addEventListener("click", () => {
-    const name = document.getElementById("ll-saved-suite")?.value; if (!name || !state.promptSuites[name]) return;
-    state.prompts = state.promptSuites[name].map((item) => ({ ...item })); state.promptSuiteName = name; state.promptMode = "custom"; renderShell();
+  document.getElementById("ll-saved-suite")?.addEventListener("change", (event) => {
+    state.promptSuiteName = event.target.value;
+    const input = document.getElementById("ll-suite-name");
+    if (input) input.value = state.promptSuiteName;
   });
-  document.getElementById("ll-delete-suite")?.addEventListener("click", () => {
-    const name = document.getElementById("ll-saved-suite")?.value; if (!name || !state.promptSuites[name]) return;
+  document.getElementById("ll-load-suite")?.addEventListener("click", () => {
+    const name = savedItemName("ll-saved-suite", "ll-suite-name", state.promptSuites);
+    if (!name) return toast("Choose a prompt suite", "Select it from the list or enter its exact saved name.", "error");
+    state.prompts = state.promptSuites[name].map((item) => ({ ...item })); state.promptSuiteName = name; state.promptMode = "custom"; renderShell();
+    toast("Prompt suite loaded", name, "success");
+  });
+  document.getElementById("ll-delete-suite")?.addEventListener("click", async () => {
+    const name = savedItemName("ll-saved-suite", "ll-suite-name", state.promptSuites);
+    if (!name) return toast("Choose a prompt suite", "Select it from the list or enter its exact saved name.", "error");
+    const confirmed = await confirmAction("Delete prompt suite?", `Delete “${name}”? This cannot be undone.`);
+    if (!confirmed) return;
     delete state.promptSuites[name]; persistPromptSuites(); if (state.promptSuiteName === name) state.promptSuiteName = ""; renderShell();
+    toast("Prompt suite deleted", `${name} · current prompts were left unchanged`, "info");
   });
   document.getElementById("ll-load-run-prompts")?.addEventListener("click", async () => {
     syncSetupInputs(); if (!state.reuseRunId) return;
@@ -1635,10 +1860,28 @@ function bindPage() {
 function startPolling() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
-    if (!state.overlay || !state.currentRunId || state.busy) return;
+    if (!state.overlay || !state.currentRunId || state.busy || state.confirmDialog) return;
     if (state.page !== "run") return;
     await refreshRun(true);
   }, 2500);
+}
+
+async function toggleDashboardFullscreen() {
+  const overlay = state.overlay;
+  if (!overlay) return;
+  const enter = !state.fullscreen;
+  state.fullscreen = enter;
+  overlay.classList.toggle("ll-fullscreen", enter);
+  renderShell();
+  try {
+    if (enter && document.fullscreenEnabled && !document.fullscreenElement) {
+      await overlay.requestFullscreen();
+    } else if (!enter && document.fullscreenElement === overlay) {
+      await document.exitFullscreen();
+    }
+  } catch {
+    if (enter) toast("Expanded dashboard enabled", "Browser fullscreen was unavailable, so LoRA Lens is using the full-window view.", "info");
+  }
 }
 
 async function openLab() {
@@ -1663,8 +1906,10 @@ async function openLab() {
 
 function closeLab() {
   closeViewer();
+  if (state.confirmDialog) finishConfirm(false);
   state.overlay?.remove();
   state.overlay = null;
+  state.fullscreen = false;
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = null;
 }
@@ -1706,6 +1951,11 @@ function installDirectIconHandler() {
 }
 
 document.addEventListener("keydown", (event) => {
+  if (state.confirmDialog && event.key === "Escape") {
+    event.preventDefault();
+    finishConfirm(false);
+    return;
+  }
   if (state.viewer) {
     if (event.key === "Escape") { event.preventDefault(); closeViewer(); return; }
     if (event.target?.matches?.("input,select,textarea")) return;
@@ -1716,7 +1966,16 @@ document.addEventListener("keydown", (event) => {
     else if (event.key === "0") { event.preventDefault(); state.viewer.scale = 1; state.viewer.x = 0; state.viewer.y = 0; updateViewerTransform(); }
     return;
   }
-  if (event.key === "Escape" && state.overlay) closeLab();
+  if (event.key === "Escape" && state.overlay && document.fullscreenElement !== state.overlay) closeLab();
+});
+
+document.addEventListener("fullscreenchange", () => {
+  if (!state.overlay) return;
+  const fullscreen = document.fullscreenElement === state.overlay;
+  if (state.fullscreen === fullscreen) return;
+  state.fullscreen = fullscreen;
+  state.overlay.classList.toggle("ll-fullscreen", fullscreen);
+  renderShell();
 });
 
 api.addEventListener("loralab.progress", (event) => {
