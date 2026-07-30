@@ -39,7 +39,7 @@ except Exception:
     PromptServer = None
 
 
-LAB_VERSION = "7.1.0"
+LAB_VERSION = "7.2.0"
 BASELINE_VALUE = "__LORALAB_BASELINE__"
 RUN_FOLDER = "LoRA_Lab"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
@@ -1476,19 +1476,36 @@ def _analysis_metric(analysis: dict, scenario_index: int, candidate_index: int, 
     return None
 
 
-def _start_tournament(run_id: str, include_baseline: bool = True, human_weight: float = 0.5) -> dict:
+def _start_tournament(
+    run_id: str,
+    include_baseline: bool = True,
+    human_weight: float = 0.5,
+    candidate_indices: list[int] | None = None,
+    round_number: int = 1,
+    stage: str = "initial",
+    previous_rounds: list[dict] | None = None,
+) -> dict:
     run = _read_run(run_id)
     if len(_completed_keys(run)) < run["expected_cells"]:
         raise RuntimeError("Run must be complete before blind tournament.")
     _load_analysis(run_id)
-    candidate_indices = [
-        index for index, candidate in enumerate(run["candidates"])
-        if include_baseline or not candidate.get("baseline")
-    ]
+    if candidate_indices is None:
+        candidate_indices = [
+            index for index, candidate in enumerate(run["candidates"])
+            if include_baseline or not candidate.get("baseline")
+        ]
+    else:
+        candidate_indices = list(dict.fromkeys(int(index) for index in candidate_indices))
+        if any(index < 0 or index >= len(run["candidates"]) for index in candidate_indices):
+            raise ValueError("Blind tournament contains a candidate outside this run.")
     if len(candidate_indices) < 2:
         raise ValueError("Blind tournament needs at least two candidates. Include baseline when testing one LoRA.")
     scenarios = []
-    stable_seed = sum((index + 1) * ord(char) for index, char in enumerate(run_id)) & 0xFFFFFFFF
+    round_number = max(1, int(round_number))
+    stable_seed = (
+        sum((index + 1) * ord(char) for index, char in enumerate(run_id))
+        + round_number * 104729
+    ) & 0xFFFFFFFF
     rng = np.random.default_rng(stable_seed)
     base_order = [int(value) for value in rng.permutation(candidate_indices)]
     for scenario_index in range(run["scenario_count"]):
@@ -1508,11 +1525,14 @@ def _start_tournament(run_id: str, include_baseline: bool = True, human_weight: 
         _prepare_tournament_round(scenario)
         scenarios.append(scenario)
     tournament = {
-        "schema": 1,
+        "schema": 2,
         "run_id": run_id,
         "status": "active",
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
+        "round_number": round_number,
+        "stage": stage if stage in {"initial", "runoff"} else "initial",
+        "previous_rounds": list(previous_rounds or []),
         "include_baseline": bool(include_baseline),
         "human_weight": max(0.0, min(1.0, float(human_weight))),
         "candidate_indices": candidate_indices,
@@ -1536,7 +1556,7 @@ def _tournament_next_match(tournament: dict, run: dict) -> dict | None:
     scenario_index = int(scenario_state["scenario_index"])
     scenario = run["scenarios"][scenario_index]
     return {
-        "match_id": f"s{scenario_index:03d}_r{scenario_state['round']:02d}_m{scenario_state['pair_index']:02d}",
+        "match_id": f"t{int(tournament.get('round_number', 1)):02d}_s{scenario_index:03d}_r{scenario_state['round']:02d}_m{scenario_state['pair_index']:02d}",
         "scenario_index": scenario_index,
         "scenario_number": scenario_index + 1,
         "scenario_total": run["scenario_count"],
@@ -1605,6 +1625,9 @@ def _tournament_public(tournament: dict | None, run: dict) -> dict | None:
     expected = run["scenario_count"] * max(0, candidate_count - 1)
     result = {
         "status": tournament["status"],
+        "round_number": int(tournament.get("round_number", 1)),
+        "stage": tournament.get("stage", "initial"),
+        "candidate_indices": list(tournament["candidate_indices"]),
         "include_baseline": tournament.get("include_baseline", True),
         "human_weight": tournament.get("human_weight", 0.5),
         "completed": len(tournament["comparisons"]),
@@ -1612,6 +1635,23 @@ def _tournament_public(tournament: dict | None, run: dict) -> dict | None:
         "percent": round(100.0 * len(tournament["comparisons"]) / max(1, expected), 1),
         "next_match": _tournament_next_match(tournament, run),
         "can_undo": bool(tournament["comparisons"]),
+        "previous_rounds": [
+            {
+                "round_number": int(item.get("round_number", index + 1)),
+                "stage": item.get("stage", "initial"),
+                "completed_at": item.get("completed_at"),
+                "candidate_count": len(item.get("candidate_indices") or []),
+                "comparison_count": len(item.get("comparisons") or []),
+                "human_winner": item.get("human_winner", "No candidate"),
+                "combined_winner": item.get("combined_winner", "No candidate"),
+                "candidate_labels": [
+                    run["candidates"][int(candidate_index)]["label"]
+                    for candidate_index in item.get("candidate_indices") or []
+                    if 0 <= int(candidate_index) < len(run["candidates"])
+                ],
+            }
+            for index, item in enumerate(tournament.get("previous_rounds") or [])
+        ],
     }
     if tournament.get("status") != "complete":
         return result
@@ -1731,6 +1771,52 @@ def _tournament_public(tournament: dict | None, run: dict) -> dict | None:
     return result
 
 
+def _archive_tournament_round(tournament: dict, run: dict) -> dict:
+    public = _tournament_public(tournament, run)
+    if not public or public.get("status") != "complete":
+        raise RuntimeError("Complete the current blind tournament before starting a runoff.")
+    return {
+        "round_number": int(tournament.get("round_number", 1)),
+        "stage": tournament.get("stage", "initial"),
+        "created_at": tournament.get("created_at"),
+        "completed_at": tournament.get("completed_at"),
+        "candidate_indices": list(tournament.get("candidate_indices") or []),
+        "comparisons": list(tournament.get("comparisons") or []),
+        "scenarios": list(tournament.get("scenarios") or []),
+        "human_winner": public.get("human_winner"),
+        "automatic_winner": public.get("automatic_winner"),
+        "combined_winner": public.get("combined_winner"),
+        "standings": list(public.get("standings") or []),
+    }
+
+
+def _start_tournament_runoff(run_id: str, finalist_count: int = 3) -> dict:
+    run = _read_run(run_id)
+    existing = _read_tournament(run_id)
+    if not existing or existing.get("status") != "complete":
+        raise RuntimeError("Complete the current blind tournament before starting a runoff.")
+    public = _tournament_public(existing, run)
+    eligible = [
+        row for row in public.get("standings") or []
+        if not row.get("candidate", {}).get("baseline")
+    ]
+    if len(eligible) < 2:
+        raise RuntimeError("A finalist runoff needs at least two non-baseline checkpoints.")
+    finalist_count = max(2, min(int(finalist_count), min(4, len(eligible))))
+    finalists = [int(row["candidate_index"]) for row in eligible[:finalist_count]]
+    previous_rounds = list(existing.get("previous_rounds") or [])
+    previous_rounds.append(_archive_tournament_round(existing, run))
+    return _start_tournament(
+        run_id,
+        include_baseline=False,
+        human_weight=float(existing.get("human_weight", 0.5)),
+        candidate_indices=finalists,
+        round_number=int(existing.get("round_number", 1)) + 1,
+        stage="runoff",
+        previous_rounds=previous_rounds,
+    )
+
+
 def _vote_tournament(run_id: str, choice: str, match_id: str, flags: dict | None = None) -> dict:
     if choice not in {"left", "right", "tie", "left_broken", "right_broken", "skip"}:
         raise ValueError("Tournament choice must be left, right, tie, broken-side, or skip.")
@@ -1815,6 +1901,10 @@ def _undo_tournament(run_id: str) -> dict:
         run_id,
         bool(existing.get("include_baseline", True)),
         float(existing.get("human_weight", 0.5)),
+        candidate_indices=list(existing.get("candidate_indices") or []),
+        round_number=int(existing.get("round_number", 1)),
+        stage=existing.get("stage", "initial"),
+        previous_rounds=list(existing.get("previous_rounds") or []),
     )
     for comparison in replay:
         run = _read_run(run_id)
@@ -2538,11 +2628,27 @@ if PromptServer is not None and web is not None:
             run_id = str(payload.get("run_id") or "")
             action = str(payload.get("action") or "start")
             run = _read_run(run_id)
-            if action in {"start", "reset"}:
+            if action == "start":
                 tournament = _start_tournament(
                     run_id,
                     bool(payload.get("include_baseline", True)),
                     float(payload.get("human_weight", 0.5)),
+                )
+            elif action == "reset":
+                existing = _read_tournament(run_id)
+                tournament = _start_tournament(
+                    run_id,
+                    bool(existing.get("include_baseline", True)) if existing else bool(payload.get("include_baseline", True)),
+                    float(existing.get("human_weight", 0.5)) if existing else float(payload.get("human_weight", 0.5)),
+                    candidate_indices=list(existing.get("candidate_indices") or []) if existing else None,
+                    round_number=int(existing.get("round_number", 1)) if existing else 1,
+                    stage=existing.get("stage", "initial") if existing else "initial",
+                    previous_rounds=list(existing.get("previous_rounds") or []) if existing else None,
+                )
+            elif action == "runoff":
+                tournament = _start_tournament_runoff(
+                    run_id,
+                    int(payload.get("finalist_count", 3)),
                 )
             elif action == "vote":
                 tournament = _vote_tournament(

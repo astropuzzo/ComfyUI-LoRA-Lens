@@ -1,5 +1,12 @@
 # Changelog
 
+## 7.2.0 - 2026-07-30
+
+- Added browser-local real-photo references beside blind tournament duels, with multi-image navigation and full-size viewing.
+- Added top-2, top-3, and top-4 finalist runoffs with fresh bracket ordering.
+- Preserved completed round summaries, comparisons, and standings in run evidence across repeated runoffs.
+- Made undo and reset operate on the current tournament round without discarding archived rounds.
+
 ## 7.1.0 - 2026-07-24
 
 - Rebuilt Stop as a run-owned cancellation flow that halts submission, removes

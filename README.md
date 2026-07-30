@@ -14,7 +14,7 @@ LoRA Lens replaces giant test graphs and subjective thumbnail hunting with a con
 - Checkpoint comparison, strength sweeps, Raw-versus-Turbo tests, and overfit diagnosis.
 - Dual face-recognition ensemble: CVLFace ViT KP-RPE AdaFace plus InsightFace AntelopeV2.
 - Dataset-wide reference centroid, top-k matching, quality diagnostics, and outlier rejection.
-- Blind pairwise human tournaments with AI/human agreement reporting.
+- Blind pairwise human tournaments with local real-photo references, finalist runoffs, and AI/human agreement reporting.
 - Full-size arrow-key image viewer, ratings, run history, evidence ZIP export, and OneTrainer checkpoint watcher.
 - No hidden subject words: the exact trigger and optional class are shown before generation.
 
@@ -72,7 +72,7 @@ remain active in the control column, so the checkpoint comparison stays fair.
 **Stop run now** cancels this run's submitter, removes its pending prompts,
 interrupts its active prompt, and requests model/VRAM cleanup. **Release VRAM**
 can repeat the cleanup manually without restarting ComfyUI.
-7. Review automatic identity ranking and complete the blind pairwise tournament.
+7. Optionally load real reference photos beside the blind pairwise tournament, then complete the identity votes.
 8. Retest only the finalists with more seeds at the model's native resolution.
 
 Do not compare models trained for different base architectures in one run. A fair checkpoint test keeps every variable fixed except the candidate LoRA.
@@ -94,7 +94,7 @@ This list is not the compatibility ceiling. Use **Import any API workflow** for 
 
 The automatic analyser compares each detected candidate face with a cleaned set of reference embeddings. It combines a quality-weighted identity centroid with the strongest individual reference matches, then ensembles two independent recognition systems. Face quality changes confidence; it does not reward an image merely for being sharper or more frontal.
 
-Automatic scores are evidence, not truth. The blind tournament intentionally hides candidate identity so your preference can be compared with the model ranking instead of being influenced by filenames or steps.
+Automatic scores are evidence, not truth. The blind tournament intentionally hides candidate identity so your preference can be compared with the model ranking instead of being influenced by filenames or steps. Real reference photos loaded in the tournament remain browser-local and visible beside every duel. If the first round is inconclusive, start a top-2, top-3, or top-4 finalist runoff; previous votes remain archived in the run evidence.
 
 ## Privacy
 

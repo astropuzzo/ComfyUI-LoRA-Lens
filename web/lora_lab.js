@@ -49,6 +49,9 @@ const state = {
   matrixCandidate: "all",
   matrixCategory: "all",
   revealAutomatic: false,
+  tournamentReferences: [],
+  tournamentReferenceIndex: 0,
+  runoffFinalistCount: 3,
   directOpen: localStorage.getItem(DIRECT_OPEN_KEY) !== "false",
   scrollPositions: {},
   renderSerial: 0,
@@ -972,6 +975,39 @@ function renderMatrix(data) {
   `;
 }
 
+function activeTournamentReference() {
+  if (!state.tournamentReferences.length) return null;
+  state.tournamentReferenceIndex = clamp(state.tournamentReferenceIndex, 0, state.tournamentReferences.length - 1);
+  return state.tournamentReferences[state.tournamentReferenceIndex];
+}
+
+function renderTournamentReferencePanel() {
+  const reference = activeTournamentReference();
+  const total = state.tournamentReferences.length;
+  return `
+    <aside class="ll-match-reference ${reference ? "has-image" : ""}">
+      <div class="ll-match-reference-head">
+        <div><strong>Real identity reference</strong><span>Local to this browser session</span></div>
+        <label class="ll-btn small ghost ll-file-button"><i class="pi pi-image"></i> ${reference ? "Add" : "Load photo"}<input id="ll-tournament-reference-input" type="file" accept="image/*" multiple></label>
+      </div>
+      ${reference ? `
+        <button class="ll-match-reference-image ll-zoomable" data-viewer-group="tournament-reference" data-src="${esc(reference.src)}" data-title="${esc(reference.name)}" aria-label="Enlarge real reference photo"><img src="${esc(reference.src)}" alt="${esc(reference.name)}"></button>
+        <div class="ll-match-reference-nav">
+          <button class="ll-icon-btn" data-reference-nav="-1" ${total < 2 ? "disabled" : ""} aria-label="Previous reference"><i class="pi pi-chevron-left"></i></button>
+          <span title="${esc(reference.name)}">${esc(reference.name)} <small>${state.tournamentReferenceIndex + 1}/${total}</small></span>
+          <button class="ll-icon-btn" data-reference-nav="1" ${total < 2 ? "disabled" : ""} aria-label="Next reference"><i class="pi pi-chevron-right"></i></button>
+        </div>
+        <div class="ll-match-reference-actions"><button class="ll-btn small ghost" id="ll-remove-tournament-reference">Remove current</button><button class="ll-btn small ghost" id="ll-clear-tournament-references">Clear all</button></div>
+      ` : `<div class="ll-match-reference-empty"><i class="pi pi-user"></i><p>Load a real photo and keep it visible beside every blind duel.</p><span>The file never leaves your browser.</span></div>`}
+    </aside>`;
+}
+
+function renderPreviousTournamentRounds(tournament) {
+  const rounds = tournament.previous_rounds || [];
+  if (!rounds.length) return "";
+  return `<div class="ll-round-history">${rounds.map((round) => `<span><strong>Round ${round.round_number}</strong>${esc(round.combined_winner)} · ${round.comparison_count} votes</span>`).join("")}</div>`;
+}
+
 function renderTournament(data) {
   const tournament = data.tournament;
   if (!tournament) {
@@ -980,6 +1016,7 @@ function renderTournament(data) {
         <div class="ll-card-head"><div class="ll-card-title">Blind 1-vs-1 tournament</div><div class="ll-card-sub">Human judgement first; AI result stays hidden</div></div>
         <div class="ll-card-body">
           <p>Each duel uses same prompt and seed. Winner advances through that scenario, then next scenario begins. Candidate names and AI scores remain hidden until completion.</p>
+          ${renderTournamentReferencePanel()}
           <label class="ll-check"><input type="checkbox" id="ll-tournament-baseline" checked> Include no-LoRA control</label>
           <div class="ll-actions"><button class="ll-btn ghost" id="ll-reveal-ai">Skip blind test · reveal AI</button><button class="ll-btn primary" id="ll-start-tournament"><i class="pi pi-eye-slash"></i> Start blind tournament</button></div>
         </div>
@@ -988,15 +1025,20 @@ function renderTournament(data) {
   if (tournament.status === "active") {
     const match = tournament.next_match;
     if (!match) return `<article class="ll-card"><div class="ll-card-body ll-empty">Preparing next blind duel…</div></article>`;
+    const stageLabel = tournament.stage === "runoff" ? `Finalist runoff · round ${tournament.round_number}` : `Blind tournament · round ${tournament.round_number}`;
     return `
       <article class="ll-card ll-tournament">
-        <div class="ll-card-head"><div class="ll-card-title">Blind duel ${tournament.completed + 1}/${tournament.total}</div><div class="ll-card-sub">Scenario ${match.scenario_number}/${match.scenario_total} · round ${match.round}</div></div>
+        <div class="ll-card-head"><div><div class="ll-card-title">${stageLabel}</div><div class="ll-card-sub">Blind duel ${tournament.completed + 1}/${tournament.total}</div></div><div class="ll-card-sub">Scenario ${match.scenario_number}/${match.scenario_total} · bracket round ${match.round}</div></div>
         <div class="ll-card-body">
+          ${renderPreviousTournamentRounds(tournament)}
           <div class="ll-duel-prompt"><strong>${esc(match.prompt_label)}</strong><span>seed ${match.seed}</span><p>${esc(match.prompt_text)}</p></div>
-          <div class="ll-duel">
-            <div class="ll-duel-side"><button class="ll-duel-image ll-zoomable" data-src="${esc(match.left.asset_url)}" aria-label="Enlarge image A"><span>Image A</span><img src="${esc(match.left.asset_url)}"></button><div class="ll-duel-flags"><label><input type="checkbox" id="ll-artifact-left"> Artifact</label><label><input type="checkbox" id="ll-identity-failure-left"> Identity failure</label></div></div>
-            <div class="ll-versus">VS</div>
-            <div class="ll-duel-side"><button class="ll-duel-image ll-zoomable" data-src="${esc(match.right.asset_url)}" aria-label="Enlarge image B"><span>Image B</span><img src="${esc(match.right.asset_url)}"></button><div class="ll-duel-flags"><label><input type="checkbox" id="ll-artifact-right"> Artifact</label><label><input type="checkbox" id="ll-identity-failure-right"> Identity failure</label></div></div>
+          <div class="ll-duel-workspace">
+            ${renderTournamentReferencePanel()}
+            <div class="ll-duel">
+              <div class="ll-duel-side"><button class="ll-duel-image ll-zoomable" data-viewer-group="tournament-duel" data-src="${esc(match.left.asset_url)}" aria-label="Enlarge image A"><span>Image A</span><img src="${esc(match.left.asset_url)}"></button><div class="ll-duel-flags"><label><input type="checkbox" id="ll-artifact-left"> Artifact</label><label><input type="checkbox" id="ll-identity-failure-left"> Identity failure</label></div></div>
+              <div class="ll-versus">VS</div>
+              <div class="ll-duel-side"><button class="ll-duel-image ll-zoomable" data-viewer-group="tournament-duel" data-src="${esc(match.right.asset_url)}" aria-label="Enlarge image B"><span>Image B</span><img src="${esc(match.right.asset_url)}"></button><div class="ll-duel-flags"><label><input type="checkbox" id="ll-artifact-right"> Artifact</label><label><input type="checkbox" id="ll-identity-failure-right"> Identity failure</label></div></div>
+            </div>
           </div>
           <div class="ll-duel-question"><strong>1. Identity only</strong><span>Which face looks more like the trained person? This decision advances the identity bracket.</span></div>
           <div class="ll-duel-actions">
@@ -1014,10 +1056,16 @@ function renderTournament(data) {
       </article>`;
   }
   const agreement = Number(tournament.agreement_rate || 0) * 100;
+  const eligibleFinalists = (tournament.standings || []).filter((row) => !row.candidate?.baseline);
+  const maxFinalists = Math.min(4, eligibleFinalists.length);
+  state.runoffFinalistCount = clamp(state.runoffFinalistCount, 2, Math.max(2, maxFinalists));
+  const finalistPreview = eligibleFinalists.slice(0, state.runoffFinalistCount).map((row) => row.candidate.label);
   return `
     <article class="ll-card ll-tournament">
-      <div class="ll-card-head"><div class="ll-card-title">Blind tournament complete</div><div class="ll-card-sub">Human vs AI exposed only after final vote</div></div>
+      <div class="ll-card-head"><div class="ll-card-title">${tournament.stage === "runoff" ? `Finalist runoff round ${tournament.round_number} complete` : "Blind tournament complete"}</div><div class="ll-card-sub">Human vs AI exposed only after final vote</div></div>
       <div class="ll-card-body">
+        ${renderPreviousTournamentRounds(tournament)}
+        ${renderTournamentReferencePanel()}
         <div class="ll-grid cols-4" style="margin-bottom:12px">
           <div class="ll-kpi"><div class="ll-kpi-label">Human identity winner</div><div class="ll-kpi-value small">${esc(tournament.human_winner)}</div></div>
           <div class="ll-kpi"><div class="ll-kpi-label">Human overall winner</div><div class="ll-kpi-value small">${esc(tournament.overall_winner || "No overall votes")}</div></div>
@@ -1033,6 +1081,11 @@ function renderTournament(data) {
         </tbody></table></div>
         ${tournament.analyzer_agreement?.ensemble?.total ? `<div class="ll-category-agreement"><span><strong>Human identity ↔ ensemble</strong>${(tournament.analyzer_agreement.ensemble.rate*100).toFixed(0)}% · ${tournament.analyzer_agreement.ensemble.same}/${tournament.analyzer_agreement.ensemble.total}</span><span><strong>Human identity ↔ KP-RPE</strong>${(tournament.analyzer_agreement.kprpe.rate*100).toFixed(0)}% · ${tournament.analyzer_agreement.kprpe.same}/${tournament.analyzer_agreement.kprpe.total}</span><span><strong>Human identity ↔ Antelope</strong>${(tournament.analyzer_agreement.antelopev2.rate*100).toFixed(0)}% · ${tournament.analyzer_agreement.antelopev2.same}/${tournament.analyzer_agreement.antelopev2.total}</span></div>` : `<div class="ll-note">Reset this legacy tournament to collect separate identity-only and overall-preference validation.</div>`}
         ${(tournament.category_agreement || []).length ? `<div class="ll-category-agreement">${tournament.category_agreement.map((item) => `<span><strong>${esc(item.category)}</strong>${(item.rate*100).toFixed(0)}% · ${item.same}/${item.total}</span>`).join("")}</div>` : ""}
+        ${maxFinalists >= 2 ? `<div class="ll-runoff">
+          <div><strong>No clear winner? Run a finalist round.</strong><p>Re-test the highest-ranked checkpoints with fresh bracket ordering. Earlier rounds and votes remain in the evidence.</p><div class="ll-runoff-preview">${finalistPreview.map((label, index) => `<span>${index + 1}. ${esc(label)}</span>`).join("")}</div></div>
+          <label class="ll-label">Finalists<select class="ll-select" id="ll-runoff-count">${Array.from({length:maxFinalists - 1}, (_, index) => index + 2).map((count) => `<option value="${count}" ${count === state.runoffFinalistCount ? "selected" : ""}>Top ${count}</option>`).join("")}</select></label>
+          <button class="ll-btn primary" id="ll-start-runoff"><i class="pi pi-replay"></i> Start finalist runoff</button>
+        </div>` : ""}
         <div class="ll-actions">${tournament.can_undo ? `<button class="ll-btn ghost" id="ll-undo-tournament">Undo previous vote</button>` : ""}<button class="ll-btn ghost" id="ll-reset-tournament">Reset blind tournament</button></div>
       </div>
     </article>`;
@@ -1300,6 +1353,17 @@ function bindShell() {
 }
 
 function viewerItemsFor(element) {
+  if (element.dataset.viewerGroup === "tournament-reference") {
+    return {
+      blind: false,
+      items: state.tournamentReferences.map((reference) => ({
+        src: reference.src,
+        display: reference.name,
+        promptLabel: "Real identity reference",
+        promptText: "Local reference photo — never uploaded by LoRA Lens.",
+      })),
+    };
+  }
   const tournament = state.runData?.tournament;
   if (tournament?.status === "active" && tournament.next_match) {
     const match = tournament.next_match;
@@ -1802,6 +1866,48 @@ async function tournamentAction(action, extra = {}) {
   }
 }
 
+function addTournamentReferences(files) {
+  const images = [...files].filter((file) => file.type.startsWith("image/"));
+  if (!images.length) {
+    toast("Reference not loaded", "Choose a PNG, JPEG, WebP or another browser-supported image.", "error");
+    return;
+  }
+  for (const file of images) {
+    state.tournamentReferences.push({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      name: file.name,
+      src: URL.createObjectURL(file),
+    });
+  }
+  state.tournamentReferenceIndex = state.tournamentReferences.length - images.length;
+  renderShell();
+}
+
+function removeTournamentReference(index = state.tournamentReferenceIndex) {
+  const [removed] = state.tournamentReferences.splice(index, 1);
+  if (removed) URL.revokeObjectURL(removed.src);
+  state.tournamentReferenceIndex = clamp(index, 0, Math.max(0, state.tournamentReferences.length - 1));
+  renderShell();
+}
+
+function clearTournamentReferences() {
+  state.tournamentReferences.forEach((reference) => URL.revokeObjectURL(reference.src));
+  state.tournamentReferences = [];
+  state.tournamentReferenceIndex = 0;
+  renderShell();
+}
+
+function bindTournamentReferences() {
+  document.getElementById("ll-tournament-reference-input")?.addEventListener("change", (event) => addTournamentReferences(event.target.files || []));
+  document.querySelectorAll("[data-reference-nav]").forEach((button) => button.addEventListener("click", () => {
+    if (state.tournamentReferences.length < 2) return;
+    state.tournamentReferenceIndex = (state.tournamentReferenceIndex + Number(button.dataset.referenceNav) + state.tournamentReferences.length) % state.tournamentReferences.length;
+    renderShell();
+  }));
+  document.getElementById("ll-remove-tournament-reference")?.addEventListener("click", () => removeTournamentReference());
+  document.getElementById("ll-clear-tournament-references")?.addEventListener("click", clearTournamentReferences);
+}
+
 function bindMonitor() {
   document.querySelectorAll("[data-run-action]").forEach((button) => button.addEventListener("click", () => runAction(button.dataset.runAction)));
   document.getElementById("ll-analyze")?.addEventListener("click", analyzeRun);
@@ -1819,8 +1925,20 @@ function bindResults() {
   document.getElementById("ll-reanalyze-top")?.addEventListener("click", analyzeRun);
   document.getElementById("ll-reveal-ai")?.addEventListener("click", () => { state.revealAutomatic = true; renderShell(); });
   document.getElementById("ll-start-tournament")?.addEventListener("click", () => tournamentAction("start", { include_baseline: document.getElementById("ll-tournament-baseline")?.checked !== false, human_weight: 0.5 }));
+  bindTournamentReferences();
+  document.getElementById("ll-runoff-count")?.addEventListener("change", (event) => {
+    state.runoffFinalistCount = Number(event.target.value);
+    renderShell();
+  });
+  document.getElementById("ll-start-runoff")?.addEventListener("click", async () => {
+    const confirmed = await confirmAction("Start finalist runoff", `Start a new blind round with the top ${state.runoffFinalistCount} checkpoints? Round-one votes will be preserved.`);
+    if (confirmed) {
+      state.revealAutomatic = false;
+      tournamentAction("runoff", { finalist_count: state.runoffFinalistCount });
+    }
+  });
   document.getElementById("ll-reset-tournament")?.addEventListener("click", async () => {
-    const confirmed = await confirmAction("Reset blind tournament", "Delete current duel votes and reshuffle this run?");
+    const confirmed = await confirmAction("Reset blind tournament", "Delete votes from the current round and reshuffle it? Earlier archived runoff rounds stay preserved.");
     if (confirmed) { state.revealAutomatic = false; tournamentAction("reset", { include_baseline: state.runData?.tournament?.include_baseline !== false, human_weight: state.runData?.tournament?.human_weight ?? 0.5 }); }
   });
   document.querySelectorAll("[data-duel-choice]").forEach((button) => button.addEventListener("click", () => tournamentAction("vote", {
