@@ -37,7 +37,7 @@ except Exception:
     pass
 
 
-PLUGIN_VERSION = "7.2.0"
+PLUGIN_VERSION = "7.2.1"
 _GRID_LOCK = threading.Lock()
 _FACE_APP = None
 _FACE_APP_ERROR = None

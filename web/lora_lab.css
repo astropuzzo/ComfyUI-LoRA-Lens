@@ -458,6 +458,14 @@
 .ll-table td { padding: 9px 8px; border-top: 1px solid #1c2936; white-space: nowrap; }
 .ll-table tr:hover td { background: rgba(37,54,70,.46); }
 .ll-table .winner td { background: rgba(38,125,119,.10); }
+.ll-lora-file-link { display: inline-flex; max-width: 100%; align-items: center; gap: 6px; padding: 2px 5px; border: 0; border-radius: 5px; color: var(--ll-text); background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.ll-lora-file-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ll-lora-file-link i { flex: 0 0 auto; color: var(--ll-cyan); opacity: .72; }
+.ll-lora-file-link:hover { color: var(--ll-cyan); background: rgba(55,187,180,.13); }
+.ll-lora-file-link:hover i { opacity: 1; }
+.ll-winner-links { display: flex; align-items: center; gap: 3px; }
+.ll-winner-links .ll-lora-file-link { min-width: 0; color: inherit; font-size: inherit; font-weight: inherit; }
+.ll-winner-separator { color: var(--ll-muted); }
 .ll-num { font-variant-numeric: tabular-nums; }
 .ll-ci { color: #9db0c4; }
 .ll-rank { color: var(--ll-gold); font-size: 14px; font-weight: 800; }

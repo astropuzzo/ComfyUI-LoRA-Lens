@@ -1,5 +1,10 @@
 # Changelog
 
+## 7.2.1 - 2026-07-30
+
+- Made revealed tournament winners and ranking candidates open their exact installed LoRA location.
+- Added safe cross-platform file reveal with Explorer selection on Windows.
+
 ## 7.2.0 - 2026-07-30
 
 - Added browser-local real-photo references beside blind tournament duels, with multi-image navigation and full-size viewing.

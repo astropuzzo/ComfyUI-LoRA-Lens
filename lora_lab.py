@@ -8,6 +8,8 @@ import json
 import math
 import os
 import re
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -39,7 +41,7 @@ except Exception:
     PromptServer = None
 
 
-LAB_VERSION = "7.2.0"
+LAB_VERSION = "7.2.1"
 BASELINE_VALUE = "__LORALAB_BASELINE__"
 RUN_FOLDER = "LoRA_Lab"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
@@ -168,6 +170,27 @@ def _available_loras() -> list[str]:
         return sorted(folder_paths.get_filename_list("loras"), key=str.lower)
     except Exception:
         return []
+
+
+def _reveal_lora_file(filename: str) -> Path:
+    filename = str(filename or "").strip()
+    if not filename or filename == BASELINE_VALUE:
+        raise ValueError("This candidate does not have a LoRA file.")
+    if filename not in set(_available_loras()):
+        raise FileNotFoundError(f"LoRA is not installed: {filename}")
+    path = folder_paths.get_full_path("loras", filename)
+    if not path:
+        raise FileNotFoundError(f"LoRA file was not found: {filename}")
+    resolved = Path(path).resolve()
+    if not resolved.is_file():
+        raise FileNotFoundError(resolved.name)
+    if os.name == "nt":
+        subprocess.Popen(["explorer.exe", f"/select,{resolved}"])
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", str(resolved)])
+    else:
+        subprocess.Popen(["xdg-open", str(resolved.parent)])
+    return resolved
 
 
 def _available_files(folder: str) -> list[str]:
@@ -2618,6 +2641,15 @@ if PromptServer is not None and web is not None:
             data["ratings"][_job_key(p, l)] = rating
             _atomic_json(_ratings_path(run_id), data)
             return web.json_response({"ok": True, "rating": rating})
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status=400)
+
+    @routes.post("/loralab/v1/reveal-lora")
+    async def loralab_reveal_lora(request):
+        try:
+            payload = await request.json()
+            path = await asyncio.to_thread(_reveal_lora_file, str(payload.get("filename") or ""))
+            return web.json_response({"ok": True, "filename": path.name})
         except Exception as exc:
             return web.json_response({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status=400)
 

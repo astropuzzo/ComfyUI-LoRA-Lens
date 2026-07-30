@@ -865,6 +865,19 @@ function analysisEntryMap(analysis) {
   return map;
 }
 
+function renderCandidateFileLink(candidate, label = candidate?.label) {
+  if (!candidate || candidate.baseline || !candidate.filename || candidate.filename === "__LORALAB_BASELINE__") return esc(label || "Control");
+  return `<button class="ll-lora-file-link" data-reveal-lora="${esc(candidate.filename)}" title="Open file location and select ${esc(candidate.filename)}"><span>${esc(label || candidate.filename)}</span><i class="pi pi-folder-open"></i></button>`;
+}
+
+function renderTournamentWinners(tournament, scoreKey, fallback) {
+  const scored = (tournament.standings || []).filter((row) => row[scoreKey] != null && Number.isFinite(Number(row[scoreKey])));
+  if (!scored.length) return esc(fallback);
+  const best = Math.max(...scored.map((row) => Number(row[scoreKey])));
+  const winners = scored.filter((row) => Math.abs(Number(row[scoreKey]) - best) <= 0.01);
+  return winners.map((row) => renderCandidateFileLink(row.candidate)).join(`<span class="ll-winner-separator">·</span>`);
+}
+
 function renderRanking(analysis) {
   return `
     <div class="ll-table-wrap"><table class="ll-table">
@@ -882,7 +895,7 @@ function renderRanking(analysis) {
         const candidate = item.candidate;
         return `<tr class="${index === 0 ? "winner" : ""}">
           <td class="ll-rank">${item.rank}</td>
-          <td title="${esc(candidate.filename)}">${esc(candidate.label)}</td>
+          <td>${renderCandidateFileLink(candidate)}</td>
           <td class="ll-num">${candidate.step ?? "—"}</td>
           <td class="ll-num">${Number(candidate.strength).toFixed(2)}</td>
           <td class="ll-num">${Number(item.final_score).toFixed(2)}</td>
@@ -1067,9 +1080,9 @@ function renderTournament(data) {
         ${renderPreviousTournamentRounds(tournament)}
         ${renderTournamentReferencePanel()}
         <div class="ll-grid cols-4" style="margin-bottom:12px">
-          <div class="ll-kpi"><div class="ll-kpi-label">Human identity winner</div><div class="ll-kpi-value small">${esc(tournament.human_winner)}</div></div>
-          <div class="ll-kpi"><div class="ll-kpi-label">Human overall winner</div><div class="ll-kpi-value small">${esc(tournament.overall_winner || "No overall votes")}</div></div>
-          <div class="ll-kpi"><div class="ll-kpi-label">AI winner</div><div class="ll-kpi-value small">${esc(tournament.automatic_winner)}</div></div>
+          <div class="ll-kpi"><div class="ll-kpi-label">Human identity winner</div><div class="ll-kpi-value small ll-winner-links">${renderTournamentWinners(tournament, "human_elo", tournament.human_winner)}</div></div>
+          <div class="ll-kpi"><div class="ll-kpi-label">Human overall winner</div><div class="ll-kpi-value small ll-winner-links">${renderTournamentWinners(tournament, "overall_elo", tournament.overall_winner || "No overall votes")}</div></div>
+          <div class="ll-kpi"><div class="ll-kpi-label">AI winner</div><div class="ll-kpi-value small ll-winner-links">${renderTournamentWinners(tournament, "automatic_score", tournament.automatic_winner)}</div></div>
           <div class="ll-kpi"><div class="ll-kpi-label">Pair agreement</div><div class="ll-kpi-value">${agreement.toFixed(1)}%</div><div class="ll-kpi-note">${tournament.agreement_count}/${tournament.agreement_total} comparable decisions</div></div>
         </div>
         <div class="ll-field" style="max-width:520px">
@@ -1077,7 +1090,7 @@ function renderTournament(data) {
           <input id="ll-human-weight" type="range" min="0" max="100" step="5" value="${Math.round(tournament.human_weight * 100)}">
         </div>
         <div class="ll-table-wrap"><table class="ll-table"><thead><tr><th>#</th><th>Candidate</th><th>Identity Elo</th><th>Identity BT</th><th>Overall Elo</th><th>Overall BT</th><th>AI normalized</th><th>A/B sides</th><th>Issues</th><th>Scenario wins</th><th>Combined</th></tr></thead><tbody>
-          ${(tournament.standings || []).map((row) => `<tr class="${row.rank === 1 ? "winner" : ""}"><td class="ll-rank">${row.rank}</td><td>${esc(row.candidate.label)}</td><td class="ll-num">${row.human_elo.toFixed(1)}</td><td class="ll-num">${row.bradley_terry_score.toFixed(1)}</td><td class="ll-num">${row.overall_elo?.toFixed(1) ?? "—"}</td><td class="ll-num">${row.overall_bradley_terry_score?.toFixed(1) ?? "—"}</td><td class="ll-num">${row.automatic_score.toFixed(1)}</td><td class="ll-num">${row.left_count}/${row.right_count}</td><td class="ll-num">${row.artifact_count}A · ${row.identity_failure_count}I</td><td class="ll-num">${row.scenario_wins}</td><td class="ll-num">${row.combined_score.toFixed(1)}</td></tr>`).join("")}
+          ${(tournament.standings || []).map((row) => `<tr class="${row.rank === 1 ? "winner" : ""}"><td class="ll-rank">${row.rank}</td><td>${renderCandidateFileLink(row.candidate)}</td><td class="ll-num">${row.human_elo.toFixed(1)}</td><td class="ll-num">${row.bradley_terry_score.toFixed(1)}</td><td class="ll-num">${row.overall_elo?.toFixed(1) ?? "—"}</td><td class="ll-num">${row.overall_bradley_terry_score?.toFixed(1) ?? "—"}</td><td class="ll-num">${row.automatic_score.toFixed(1)}</td><td class="ll-num">${row.left_count}/${row.right_count}</td><td class="ll-num">${row.artifact_count}A · ${row.identity_failure_count}I</td><td class="ll-num">${row.scenario_wins}</td><td class="ll-num">${row.combined_score.toFixed(1)}</td></tr>`).join("")}
         </tbody></table></div>
         ${tournament.analyzer_agreement?.ensemble?.total ? `<div class="ll-category-agreement"><span><strong>Human identity ↔ ensemble</strong>${(tournament.analyzer_agreement.ensemble.rate*100).toFixed(0)}% · ${tournament.analyzer_agreement.ensemble.same}/${tournament.analyzer_agreement.ensemble.total}</span><span><strong>Human identity ↔ KP-RPE</strong>${(tournament.analyzer_agreement.kprpe.rate*100).toFixed(0)}% · ${tournament.analyzer_agreement.kprpe.same}/${tournament.analyzer_agreement.kprpe.total}</span><span><strong>Human identity ↔ Antelope</strong>${(tournament.analyzer_agreement.antelopev2.rate*100).toFixed(0)}% · ${tournament.analyzer_agreement.antelopev2.same}/${tournament.analyzer_agreement.antelopev2.total}</span></div>` : `<div class="ll-note">Reset this legacy tournament to collect separate identity-only and overall-preference validation.</div>`}
         ${(tournament.category_agreement || []).length ? `<div class="ll-category-agreement">${tournament.category_agreement.map((item) => `<span><strong>${esc(item.category)}</strong>${(item.rate*100).toFixed(0)}% · ${item.same}/${item.total}</span>`).join("")}</div>` : ""}
@@ -1866,6 +1879,15 @@ async function tournamentAction(action, extra = {}) {
   }
 }
 
+async function revealLoraFile(filename) {
+  try {
+    const result = await jsonFetch("/loralab/v1/reveal-lora", { method: "POST", body: { filename } });
+    toast("LoRA file selected", result.filename || filename, "success");
+  } catch (error) {
+    toast("Could not open LoRA location", error.message, "error");
+  }
+}
+
 function addTournamentReferences(files) {
   const images = [...files].filter((file) => file.type.startsWith("image/"));
   if (!images.length) {
@@ -1923,6 +1945,7 @@ function bindResults() {
   document.getElementById("ll-blind")?.addEventListener("change", (event) => { state.blind = event.target.checked; renderShell(); });
   document.getElementById("ll-reanalyze")?.addEventListener("click", analyzeRun);
   document.getElementById("ll-reanalyze-top")?.addEventListener("click", analyzeRun);
+  document.querySelectorAll("[data-reveal-lora]").forEach((button) => button.addEventListener("click", () => revealLoraFile(button.dataset.revealLora)));
   document.getElementById("ll-reveal-ai")?.addEventListener("click", () => { state.revealAutomatic = true; renderShell(); });
   document.getElementById("ll-start-tournament")?.addEventListener("click", () => tournamentAction("start", { include_baseline: document.getElementById("ll-tournament-baseline")?.checked !== false, human_weight: 0.5 }));
   bindTournamentReferences();
