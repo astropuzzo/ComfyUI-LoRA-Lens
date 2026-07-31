@@ -53,3 +53,9 @@ Put 8–20 varied, high-quality, single-face holdout images in a folder under `C
 ## Results
 
 Use arrow keys or on-screen arrows to inspect full-size outputs one by one. Rate identity and overall preference independently. The blind tournament presents matched images pairwise until a winner emerges, then compares human and automatic rankings.
+
+Before or during a blind tournament, use **Load photo** to keep one or more real identity references beside every duel. These files stay inside the browser session and are never uploaded or copied into the run. Use the reference arrows to switch photos, or click the photo for the full-size viewer.
+
+When the first result is not convincing, choose the top 2–4 checkpoints and start a **finalist runoff**. The runoff reshuffles the bracket and collects a new set of votes from only those finalists. Earlier rounds remain archived in `LAB_TOURNAMENT.json` and in the evidence export; resetting a runoff resets only its current votes.
+
+After results are revealed, click any winner or candidate name in the tournament standings or automatic ranking. LoRA Lens opens the installed file location and selects that exact `.safetensors` file in Windows Explorer. Control/baseline rows are not clickable because they do not represent a LoRA file.
