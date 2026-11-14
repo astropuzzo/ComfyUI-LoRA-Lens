@@ -209,6 +209,9 @@ function applyProfile(profileId) {
   state.form.sampler = profile.sampler;
   state.form.scheduler = profile.scheduler;
   state.form.negativeMode = profile.negative_mode;
+  if (profile.width) state.form.width = profile.width;
+  if (profile.height) state.form.height = profile.height;
+  if (profile.negative_prompt !== undefined) state.form.negativePrompt = profile.negative_prompt;
   if (profile.installed_model) state.form.modelName = profile.installed_model;
   state.form.clipName = profile.installed_clip || state.form.clipName || state.boot?.text_encoders?.[0] || "";
   state.form.clipName2 = profile.installed_clip_2 || "";
@@ -741,7 +744,7 @@ function renderSetup() {
                 <div class="ll-field"><label class="ll-label">Reference faces ${help("Folder is relative to ComfyUI/input. Use 8–20 varied, high-quality single-face holdouts not used for training.")}</label><input class="ll-input" id="ll-reference" list="ll-reference-list" value="${esc(state.form.referenceFolder)}"><datalist id="ll-reference-list">${state.boot.references.map((item) => `<option value="${esc(item.folder)}">${item.count} images</option>`).join("")}</datalist></div>
               </div>
               <div class="ll-field-row">
-                <div class="ll-field"><label class="ll-label">Width ${help("Quick uses 768 to screen cheaply. Final decisions should be verified at Krea's native 1024 resolution.")}</label><input class="ll-input" id="ll-width" type="number" min="512" max="2048" step="8" value="${state.form.width}"></div>
+                <div class="ll-field"><label class="ll-label">Width ${help("Quick uses 768 to screen cheaply. Verify finalists at the model's target resolution. The MOSS reference uses 976 × 1536; every candidate in a run uses the same size.")}</label><input class="ll-input" id="ll-width" type="number" min="512" max="2048" step="8" value="${state.form.width}"></div>
                 <div class="ll-field"><label class="ll-label">Height ${help("Keep the same resolution across candidates. Aspect ratio is a test variable only when deliberately planned.")}</label><input class="ll-input" id="ll-height" type="number" min="512" max="2048" step="8" value="${state.form.height}"></div>
               </div>
               <button class="ll-btn small ghost ll-advanced-toggle" id="ll-advanced-stack-toggle"><i class="pi ${state.showAdvancedStack ? "pi-angle-up" : "pi-angle-down"}"></i> ${state.showAdvancedStack ? "Hide" : "Show"} advanced model stack</button>

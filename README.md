@@ -8,7 +8,7 @@ LoRA Lens replaces giant test graphs and subjective thumbnail hunting with a con
 
 ## Highlights
 
-- Categorized native adapters for Krea 2, FLUX.1, Z-Image, and Anima.
+- Categorized native adapters for MOSS-Image, Krea 2, FLUX.1, Z-Image, and Anima.
 - Turbo, Schnell, Aesthetic, Raw, Base, and Dev variants remain separate and explicit.
 - Universal API-workflow adapter for future models and custom-node pipelines.
 - Checkpoint comparison, strength sweeps, Raw-versus-Turbo tests, and overfit diagnosis.
@@ -83,6 +83,7 @@ Native adapters currently cover:
 
 | Family | Variants | Native workflow |
 |---|---|---|
+| MOSS-Image | Base, SFT | Qwen3.5-9B encoder, FLUX.2 VAE/latent, Skip Layer Guidance block 22 |
 | Krea 2 | Raw, Turbo | Qwen3-VL encoder, Qwen Image VAE, Krea 2 loader |
 | FLUX.1 | Dev, Schnell, Krea Dev | Dual CLIP/T5XXL, FLUX latent workflow |
 | Z-Image | Base, Turbo | Qwen 3 4B, AuraFlow model sampling, SD3 latent |

@@ -146,7 +146,7 @@ def _atomic_json(path: Path, payload: object) -> None:
 
 
 def _run_root(run_id: str) -> Path:
-    return Path(folder_paths.get_output_directory()) / RUN_FOLDER / _safe_slug(run_id, "run")
+    return Path(folder_paths.get_output_directory()).resolve() / RUN_FOLDER / _safe_slug(run_id, "run")
 
 
 def _run_file(run_id: str) -> Path:
@@ -336,6 +336,29 @@ def _profile_file(profile: dict, key: str, folder: str) -> str:
             if str(needle).lower() in name.lower():
                 return name
     raise FileNotFoundError(f"No installed {folder} file matches {needles}")
+
+
+def _native_profile_errors(profile: dict) -> list[str]:
+    import nodes
+
+    errors = []
+    required_nodes = {"UNETLoader", "VAELoader", "KSampler", profile.get("latent", "EmptyLatentImage")}
+    loader_name = "DualCLIPLoader" if profile.get("adapter") == "split_dual" else "CLIPLoader"
+    required_nodes.add(loader_name)
+    if profile.get("model_sampling"):
+        required_nodes.add(profile["model_sampling"]["class_type"])
+    for node_type in sorted(required_nodes - set(nodes.NODE_CLASS_MAPPINGS)):
+        errors.append(f"ComfyUI node is unavailable: {node_type}")
+    loader = nodes.NODE_CLASS_MAPPINGS.get(loader_name)
+    if loader is not None:
+        type_spec = loader.INPUT_TYPES().get("required", {}).get("type")
+        if type_spec and isinstance(type_spec[0], (list, tuple)) and profile["clip_type"] not in type_spec[0]:
+            errors.append(f"{loader_name} does not support type '{profile['clip_type']}'. Update ComfyUI to a version with this model family.")
+    if profile["sampler"] not in comfy.samplers.KSampler.SAMPLERS:
+        errors.append(f"Sampler is unavailable: {profile['sampler']}")
+    if profile["scheduler"] not in comfy.samplers.KSampler.SCHEDULERS:
+        errors.append(f"Scheduler is unavailable: {profile['scheduler']}")
+    return errors
 
 
 def _model_patch_catalog() -> list[dict]:
@@ -632,8 +655,8 @@ def _make_plan(payload: dict) -> dict:
     trigger = str(payload.get("trigger") or "").strip()
     prompts = _normalize_prompts(payload, trigger)
     seeds = _normalize_seeds(payload.get("seeds"))
-    width = _normalize_dimension(payload.get("width"), 1024)
-    height = _normalize_dimension(payload.get("height"), 1024)
+    width = _normalize_dimension(payload.get("width"), profile.get("width", 1024))
+    height = _normalize_dimension(payload.get("height"), profile.get("height", 1024))
     available_loras = set(_available_loras())
     candidates = _build_candidates(payload, available_loras)
     mode = str(payload.get("mode") or "compare")
@@ -725,6 +748,10 @@ def _make_plan(payload: dict) -> dict:
         raise ValueError(f"Unknown scheduler: {profile['scheduler']}")
     if profile["negative_mode"] not in {"zero", "encode"}:
         raise ValueError("Negative conditioning mode must be zero or encode.")
+    if workflow_adapter == "native":
+        errors = _native_profile_errors(profile)
+        if errors:
+            raise ValueError(" · ".join(errors))
     model_patches = _normalize_model_patches(payload.get("model_patches"))
     if mode == "enhancer_compare":
         enhancer_patches = {
@@ -770,7 +797,7 @@ def _make_plan(payload: dict) -> dict:
         "height": height,
         "trigger": trigger,
         "subject_class": str(payload.get("subject_class") or "").strip(),
-        "negative_prompt": str(payload.get("negative_prompt") or "deformed face, duplicate person, malformed hands"),
+        "negative_prompt": str(payload.get("negative_prompt", profile.get("negative_prompt", "deformed face, duplicate person, malformed hands")) or ""),
         "reference_folder": str(payload.get("reference_folder") or "lora_reference"),
         "grid_mode": str(payload.get("grid_mode") or "off"),
         "output_prefix": prefix,
@@ -2327,11 +2354,6 @@ def _evidence_bundle(run_id: str) -> tuple[bytes, str]:
 
 
 def _bootstrap_payload() -> dict:
-    try:
-        import nodes
-        installed_node_types = set(nodes.NODE_CLASS_MAPPINGS)
-    except Exception:
-        installed_node_types = set()
     profiles = []
     for profile in PROFILES.values():
         item = dict(profile)
@@ -2353,16 +2375,7 @@ def _bootstrap_payload() -> dict:
             item["installed_vae"] = _profile_file(profile, "vae_contains", "vae")
         except Exception as exc:
             missing.append(str(exc))
-        if profile.get("sampler") not in comfy.samplers.KSampler.SAMPLERS:
-            missing.append(f"Sampler is unavailable: {profile.get('sampler')}")
-        if profile.get("scheduler") not in comfy.samplers.KSampler.SCHEDULERS:
-            missing.append(f"Scheduler is unavailable: {profile.get('scheduler')}")
-        required_nodes = {"UNETLoader", "VAELoader", "KSampler", profile.get("latent")}
-        required_nodes.add("DualCLIPLoader" if profile.get("adapter") == "split_dual" else "CLIPLoader")
-        if profile.get("model_sampling"):
-            required_nodes.add(profile["model_sampling"]["class_type"])
-        for node_type in sorted(required_nodes - installed_node_types):
-            missing.append(f"ComfyUI node is unavailable: {node_type}")
+        missing.extend(_native_profile_errors(profile))
         item["missing"] = missing
         item["available"] = not missing
         if missing:

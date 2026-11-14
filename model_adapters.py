@@ -9,6 +9,40 @@ from __future__ import annotations
 
 
 MODEL_PROFILES = {
+    "moss_image_sft": {
+        "id": "moss_image_sft", "family": "MOSS-Image", "variant": "SFT",
+        "category": "Photorealistic", "acceleration": "Fine-tuned model",
+        "name": "MOSS-Image · SFT", "adapter": "split_single",
+        "description": "MOSS SFT evaluation using the sampling graph embedded in MOSS_00031_.png.",
+        "model_folder": "diffusion_models", "model_contains": ["moss_image_sft_bf16", "moss_image_sft"],
+        "clip_type": "moss_image", "clip_contains": ["qwen3.5_9b_int8_convrot", "qwen3.5_9b_bf16"],
+        "vae_contains": ["flux2-vae", "flux2_vae"], "latent": "EmptyFlux2LatentImage",
+        "model_sampling": {"class_type": "SkipLayerGuidanceDiTSimple", "inputs": {
+            "double_layers": "", "single_layers": "22", "start_percent": 0.0, "end_percent": 0.5,
+        }},
+        "width": 976, "height": 1536,
+        "steps": 15, "cfg": 3.0, "sampler": "deis_2m_ode", "scheduler": "beta57",
+        "negative_mode": "encode", "seconds_per_cell_4090": 60,
+        "negative_prompt": "worst quality, low quality, bad anatomy, watermark, jpeg artifact, blurry, sepia, sketch, ",
+        "source": "MOSS_00031_.png embedded API workflow; runtime estimate is approximate",
+    },
+    "moss_image_base": {
+        "id": "moss_image_base", "family": "MOSS-Image", "variant": "Base",
+        "category": "Photorealistic", "acceleration": "None",
+        "name": "MOSS-Image · Base", "adapter": "split_single",
+        "description": "MOSS training-base evaluation with the same explicit sampling settings as the SFT reference.",
+        "model_folder": "diffusion_models", "model_contains": ["moss_image_base_bf16", "moss_image_base"],
+        "clip_type": "moss_image", "clip_contains": ["qwen3.5_9b_int8_convrot", "qwen3.5_9b_bf16"],
+        "vae_contains": ["flux2-vae", "flux2_vae"], "latent": "EmptyFlux2LatentImage",
+        "model_sampling": {"class_type": "SkipLayerGuidanceDiTSimple", "inputs": {
+            "double_layers": "", "single_layers": "22", "start_percent": 0.0, "end_percent": 0.5,
+        }},
+        "width": 976, "height": 1536,
+        "steps": 15, "cfg": 3.0, "sampler": "deis_2m_ode", "scheduler": "beta57",
+        "negative_mode": "encode", "seconds_per_cell_4090": 60,
+        "negative_prompt": "worst quality, low quality, bad anatomy, watermark, jpeg artifact, blurry, sepia, sketch, ",
+        "source": "Base model with sampling settings from MOSS_00031_.png; validate Base and SFT separately",
+    },
     "krea2_turbo": {
         "id": "krea2_turbo", "family": "Krea 2", "variant": "Turbo",
         "category": "Photorealistic", "acceleration": "Distilled model",
