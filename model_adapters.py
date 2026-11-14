@@ -9,6 +9,40 @@ from __future__ import annotations
 
 
 MODEL_PROFILES = {
+    "moss_image_sft": {
+        "id": "moss_image_sft", "family": "MOSS-Image", "variant": "SFT",
+        "category": "Photorealistic", "acceleration": "Fine-tuned model",
+        "name": "MOSS-Image · SFT", "adapter": "split_single",
+        "description": "MOSS SFT evaluation using the sampling graph embedded in MOSS_00031_.png.",
+        "model_folder": "diffusion_models", "model_contains": ["moss_image_sft_bf16", "moss_image_sft"],
+        "clip_type": "moss_image", "clip_contains": ["qwen3.5_9b_int8_convrot", "qwen3.5_9b_bf16"],
+        "vae_contains": ["flux2-vae", "flux2_vae"], "latent": "EmptyFlux2LatentImage",
+        "model_sampling": {"class_type": "SkipLayerGuidanceDiTSimple", "inputs": {
+            "double_layers": "", "single_layers": "22", "start_percent": 0.0, "end_percent": 0.5,
+        }},
+        "width": 976, "height": 1536,
+        "steps": 15, "cfg": 3.0, "sampler": "deis_2m_ode", "scheduler": "beta57",
+        "negative_mode": "encode", "seconds_per_cell_4090": 60,
+        "negative_prompt": "worst quality, low quality, bad anatomy, watermark, jpeg artifact, blurry, sepia, sketch, ",
+        "source": "MOSS_00031_.png embedded API workflow; runtime estimate is approximate",
+    },
+    "moss_image_base": {
+        "id": "moss_image_base", "family": "MOSS-Image", "variant": "Base",
+        "category": "Photorealistic", "acceleration": "None",
+        "name": "MOSS-Image · Base", "adapter": "split_single",
+        "description": "MOSS training-base evaluation with the same explicit sampling settings as the SFT reference.",
+        "model_folder": "diffusion_models", "model_contains": ["moss_image_base_bf16", "moss_image_base"],
+        "clip_type": "moss_image", "clip_contains": ["qwen3.5_9b_int8_convrot", "qwen3.5_9b_bf16"],
+        "vae_contains": ["flux2-vae", "flux2_vae"], "latent": "EmptyFlux2LatentImage",
+        "model_sampling": {"class_type": "SkipLayerGuidanceDiTSimple", "inputs": {
+            "double_layers": "", "single_layers": "22", "start_percent": 0.0, "end_percent": 0.5,
+        }},
+        "width": 976, "height": 1536,
+        "steps": 15, "cfg": 3.0, "sampler": "deis_2m_ode", "scheduler": "beta57",
+        "negative_mode": "encode", "seconds_per_cell_4090": 60,
+        "negative_prompt": "worst quality, low quality, bad anatomy, watermark, jpeg artifact, blurry, sepia, sketch, ",
+        "source": "Base model with sampling settings from MOSS_00031_.png; validate Base and SFT separately",
+    },
     "krea2_turbo": {
         "id": "krea2_turbo", "family": "Krea 2", "variant": "Turbo",
         "category": "Photorealistic", "acceleration": "Distilled model",
@@ -134,6 +168,45 @@ MODEL_PROFILES = {
         "steps": 8, "cfg": 1.0, "sampler": "euler", "scheduler": "simple",
         "negative_mode": "zero", "seconds_per_cell_4090": 18,
         "source": "Official Anima model card",
+    },
+    "minimax_h3_image": {
+        "id": "minimax_h3_image", "family": "MiniMax H3", "variant": "Image",
+        "category": "Photorealistic", "acceleration": "6-step model",
+        "name": "MiniMax H3 · Image", "adapter": "minimax_h3_image",
+        "description": "Native MiniMax-H3-Image text-to-image. Works from 4 to 20 MP and is best near 16 MP; runs below 4 MP are blocked.",
+        "model_folder": "diffusion_models",
+        # Exact template builds first; the generic needle must not reach the fl2va/ref2va video checkpoints.
+        "model_contains": ["minimax_h3_image_pruned_int8_convrot", "minimax_h3_image_bf16", "minimax_h3_image"],
+        "clip_type": "minimax",
+        "clip_contains": ["qwen3vl_32b_minimax_h3_int8_convrot", "qwen3vl_32b_minimax_h3_nvfp4", "qwen3vl_32b_minimax_h3"],
+        # Plain "minimax_h3_image_vae" would also match the 500k and t1 experimental decoders.
+        "vae_contains": ["minimax_h3_image_vae_fp16"],
+        # The conditioning node also produces the 5-D image latent, so there is no Empty*Latent node.
+        "conditioning_node": "MiniMaxH3ImageConditioning",
+        "width": 2048, "height": 2048,
+        "dimension_multiple": 32, "min_dimension": 1024, "max_dimension": 8192,
+        "min_pixels": 4_000_000, "max_pixels": 21_000_000,
+        "resolution_presets": {"quick": [2048, 2048], "standard": [4096, 4096], "deep": [4096, 4096]},
+        "size_options": [
+            {"label": "16 MP · 1:1", "width": 4096, "height": 4096},
+            {"label": "16 MP · 4:3", "width": 4736, "height": 3552},
+            {"label": "16 MP · 3:4", "width": 3552, "height": 4736},
+            {"label": "16 MP · 3:2", "width": 5024, "height": 3360},
+            {"label": "16 MP · 2:3", "width": 3360, "height": 5024},
+            {"label": "16 MP · 16:9", "width": 5472, "height": 3072},
+            {"label": "16 MP · 9:16", "width": 3072, "height": 5472},
+            {"label": "16 MP · 21:9", "width": 6272, "height": 2688},
+            {"label": "4 MP · 1:1", "width": 2048, "height": 2048},
+            {"label": "4 MP · 4:3", "width": 2368, "height": 1792},
+            {"label": "4 MP · 3:4", "width": 1792, "height": 2368},
+            {"label": "4 MP · 3:2", "width": 2496, "height": 1664},
+            {"label": "4 MP · 2:3", "width": 1664, "height": 2496},
+            {"label": "4 MP · 16:9", "width": 2720, "height": 1536},
+            {"label": "4 MP · 9:16", "width": 1536, "height": 2720},
+        ],
+        "steps": 6, "cfg": 1.0, "sampler": "euler", "scheduler": "simple",
+        "negative_mode": "zero", "seconds_per_cell_4090": 10,
+        "source": "Official ComfyUI image_minimax_h3_image_t2i template (v0.45.0); runtime estimate is approximate",
     },
 }
 

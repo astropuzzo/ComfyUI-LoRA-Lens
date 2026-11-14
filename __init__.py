@@ -37,7 +37,7 @@ except Exception:
     pass
 
 
-PLUGIN_VERSION = "7.2.1"
+PLUGIN_VERSION = "7.3.0"
 _GRID_LOCK = threading.Lock()
 _FACE_APP = None
 _FACE_APP_ERROR = None
@@ -857,7 +857,7 @@ class LoRATestGridCollector:
         label_height,
         font_size,
     ):
-        output_root = Path(folder_paths.get_output_directory())
+        output_root = Path(folder_paths.get_output_directory()).resolve()
         safe_run = _safe_slug(run_id, "run")
         safe_prefix = _safe_slug(output_prefix, "LoRA_Test")
         run_root = output_root / "LoRA_Test_Grids" / safe_run

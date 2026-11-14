@@ -1,5 +1,13 @@
 # Changelog
 
+## 7.3.0 - 2026-11-14
+
+- Added a native MiniMax H3 Image profile that mirrors the official ComfyUI 0.45.0 text-to-image template.
+- Made output size limits per profile: MiniMax H3 Image accepts 4 to 20 MP in multiples of 32 and blocks smaller runs.
+- Added an output size picker with the 4 MP and 16 MP sizes; Quick uses 4 MP, Standard and Deep use 16 MP.
+- Imported API workflows can now request up to 8192 px per side.
+- Included the MOSS-Image profiles and native profile checks that were running locally but not yet published.
+
 ## 7.2.1 - 2026-07-30
 
 - Made revealed tournament winners and ranking candidates open their exact installed LoRA location.
