@@ -19,6 +19,9 @@ Image-model families differ in loader nodes, text encoders, VAEs, latent formats
 | Anima Base | `anima-base-v1.0`, `qwen_3_06b_base`, Qwen Image VAE | 30 steps, CFG 4, er_sde/simple |
 | Anima Aesthetic | matching Aesthetic diffusion model, same encoder/VAE | 30 steps, CFG 4, er_sde/simple |
 | Anima Turbo | matching Turbo diffusion model, same encoder/VAE | 8 steps, CFG 1, Euler/simple |
+| MiniMax H3 Image | `minimax_h3_image_pruned_int8_convrot`, `qwen3vl_32b_minimax_h3` (type `minimax`), `minimax_h3_image_vae_fp16`; ComfyUI 0.45.0+ | 6 steps, CFG 1, Euler/simple, 4 to 20 MP (default 4 MP, 16 MP for Standard and Deep) |
+
+MiniMax H3 Image uses its own adapter. `MiniMaxH3ImageConditioning` produces both the positive conditioning and the image latent, the negative is always `ConditioningZeroOut`, and sizes snap to multiples of 32. Runs below 4 MP are rejected because the model degrades at low resolution.
 
 Defaults follow the upstream model cards or official ComfyUI workflow templates and remain editable. Quantized filenames are detected by family patterns rather than one exact build name.
 

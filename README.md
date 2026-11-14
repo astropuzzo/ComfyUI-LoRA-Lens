@@ -8,7 +8,7 @@ LoRA Lens replaces giant test graphs and subjective thumbnail hunting with a con
 
 ## Highlights
 
-- Categorized native adapters for MOSS-Image, Krea 2, FLUX.1, Z-Image, and Anima.
+- Categorized native adapters for MOSS-Image, Krea 2, FLUX.1, Z-Image, Anima, and MiniMax H3 Image.
 - Turbo, Schnell, Aesthetic, Raw, Base, and Dev variants remain separate and explicit.
 - Universal API-workflow adapter for future models and custom-node pipelines.
 - Checkpoint comparison, strength sweeps, Raw-versus-Turbo tests, and overfit diagnosis.
@@ -88,6 +88,7 @@ Native adapters currently cover:
 | FLUX.1 | Dev, Schnell, Krea Dev | Dual CLIP/T5XXL, FLUX latent workflow |
 | Z-Image | Base, Turbo | Qwen 3 4B, AuraFlow model sampling, SD3 latent |
 | Anima | Base, Aesthetic, Turbo | Qwen 3 0.6B, Qwen Image VAE, Anima sampling defaults |
+| MiniMax H3 | Image | Qwen3-VL 32B encoder, H3 Image VAE, H3 conditioning latent, 4 to 16 MP output |
 
 This list is not the compatibility ceiling. Use **Import any API workflow** for SD 1.5, SDXL, Pony, Illustrious, custom quantizations, GGUF loaders, or any new model with a working ComfyUI graph. See [Model adapters](docs/MODEL_ADAPTERS.md).
 

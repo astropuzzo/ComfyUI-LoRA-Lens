@@ -41,7 +41,7 @@ except Exception:
     PromptServer = None
 
 
-LAB_VERSION = "7.2.1"
+LAB_VERSION = "7.3.0"
 BASELINE_VALUE = "__LORALAB_BASELINE__"
 RUN_FOLDER = "LoRA_Lab"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
@@ -342,7 +342,8 @@ def _native_profile_errors(profile: dict) -> list[str]:
     import nodes
 
     errors = []
-    required_nodes = {"UNETLoader", "VAELoader", "KSampler", profile.get("latent", "EmptyLatentImage")}
+    required_nodes = {"UNETLoader", "VAELoader", "KSampler"}
+    required_nodes.add(profile.get("conditioning_node") or profile.get("latent", "EmptyLatentImage"))
     loader_name = "DualCLIPLoader" if profile.get("adapter") == "split_dual" else "CLIPLoader"
     required_nodes.add(loader_name)
     if profile.get("model_sampling"):
@@ -550,11 +551,38 @@ def _normalize_seeds(value: object) -> list[int]:
     return seeds
 
 
-def _normalize_dimension(value: object, default: int) -> int:
+def _dimension_limits(profile: dict, workflow_adapter: str = "native") -> dict:
+    limits = {
+        "min": int(profile.get("min_dimension", 512)),
+        "max": int(profile.get("max_dimension", 2048)),
+        "multiple": int(profile.get("dimension_multiple", 8)),
+        "min_pixels": int(profile.get("min_pixels") or 0),
+        "max_pixels": int(profile.get("max_pixels") or 0),
+    }
+    if workflow_adapter == "api_template":
+        # Imported graphs can target any model, so only the hard upper bound is relaxed.
+        limits["max"] = max(limits["max"], 8192)
+    return limits
+
+
+def _normalize_dimension(value: object, default: int, limits: dict | None = None) -> int:
+    limits = limits or {"min": 512, "max": 2048, "multiple": 8}
     value = int(value or default)
-    if value < 512 or value > 2048:
-        raise ValueError("Width and height must be between 512 and 2048.")
-    return max(512, int(round(value / 8) * 8))
+    if value < limits["min"] or value > limits["max"]:
+        raise ValueError(f"Width and height must be between {limits['min']} and {limits['max']}.")
+    multiple = max(1, limits["multiple"])
+    return min(limits["max"], max(limits["min"], int(round(value / multiple) * multiple)))
+
+
+def _check_pixel_budget(width: int, height: int, limits: dict, profile_name: str) -> None:
+    pixels = width * height
+    if limits.get("min_pixels") and pixels < limits["min_pixels"]:
+        raise ValueError(
+            f"{profile_name} needs at least {limits['min_pixels'] / 1e6:.0f} MP; {width}×{height} is {pixels / 1e6:.1f} MP. "
+            "Use 2048×2048 (4 MP) or 4096×4096 (16 MP)."
+        )
+    if limits.get("max_pixels") and pixels > limits["max_pixels"]:
+        raise ValueError(f"{profile_name} supports up to {limits['max_pixels'] / 1e6:.0f} MP; {width}×{height} is {pixels / 1e6:.1f} MP.")
 
 
 def _build_candidates(payload: dict, available: set[str]) -> list[dict]:
@@ -655,8 +683,10 @@ def _make_plan(payload: dict) -> dict:
     trigger = str(payload.get("trigger") or "").strip()
     prompts = _normalize_prompts(payload, trigger)
     seeds = _normalize_seeds(payload.get("seeds"))
-    width = _normalize_dimension(payload.get("width"), profile.get("width", 1024))
-    height = _normalize_dimension(payload.get("height"), profile.get("height", 1024))
+    limits = _dimension_limits(profile, workflow_adapter)
+    width = _normalize_dimension(payload.get("width"), profile.get("width", 1024), limits)
+    height = _normalize_dimension(payload.get("height"), profile.get("height", 1024), limits)
+    _check_pixel_budget(width, height, limits, profile["name"])
     available_loras = set(_available_loras())
     candidates = _build_candidates(payload, available_loras)
     mode = str(payload.get("mode") or "compare")
@@ -748,6 +778,9 @@ def _make_plan(payload: dict) -> dict:
         raise ValueError(f"Unknown scheduler: {profile['scheduler']}")
     if profile["negative_mode"] not in {"zero", "encode"}:
         raise ValueError("Negative conditioning mode must be zero or encode.")
+    if profile.get("adapter") == "minimax_h3_image":
+        # The official template always zeroes the negative; the run record should say so.
+        profile["negative_mode"] = "zero"
     if workflow_adapter == "native":
         errors = _native_profile_errors(profile)
         if errors:
@@ -1008,6 +1041,19 @@ def _job_prompt(run: dict, scenario: dict, candidate: dict, candidate_index: int
             },
         },
     }
+    if profile.get("adapter") == "minimax_h3_image":
+        # Mirrors the official T2I template: one conditioning node yields the positive
+        # (slot 0) and the [1, 24, 1, h/16, w/16] image latent (slot 1).
+        workflow[positive_id] = {
+            "class_type": profile.get("conditioning_node", "MiniMaxH3ImageConditioning"),
+            "inputs": {
+                "clip": ["2", 0], "vae": ["3", 0], "prompt": scenario["text"],
+                "width": int(run["width"]), "height": int(run["height"]),
+            },
+        }
+        workflow["6"] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": [positive_id, 0]}}
+        del workflow["7"]
+        workflow["8"]["inputs"]["latent_image"] = [positive_id, 1]
     next_patch_id = 11
     loader_model_link = ["1", 0]
     sampling_patch = profile.get("model_sampling")

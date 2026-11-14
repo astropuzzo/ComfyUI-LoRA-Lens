@@ -211,6 +211,14 @@ function applyProfile(profileId) {
   state.form.negativeMode = profile.negative_mode;
   if (profile.width) state.form.width = profile.width;
   if (profile.height) state.form.height = profile.height;
+  const presetSize = profile.resolution_presets?.[state.form.preset];
+  if (presetSize) {
+    [state.form.width, state.form.height] = presetSize;
+  } else if (!profile.width && !sizeFitsProfile(profile, state.form.width, state.form.height)) {
+    // Leaving a 4-16 MP profile must not carry its size into a 2048-capped one.
+    const preset = state.boot?.presets?.find((item) => item.id === state.form.preset);
+    if (preset) { state.form.width = preset.width; state.form.height = preset.height; }
+  }
   if (profile.negative_prompt !== undefined) state.form.negativePrompt = profile.negative_prompt;
   if (profile.installed_model) state.form.modelName = profile.installed_model;
   state.form.clipName = profile.installed_clip || state.form.clipName || state.boot?.text_encoders?.[0] || "";
@@ -222,6 +230,39 @@ function applyProfile(profileId) {
     if (["raw_vs_turbo", "enhancer"].includes(state.objective)) { state.objective = "best_checkpoint"; state.form.mode = "compare"; }
   }
   if (state.form.turboLora) applyTurboDefaults();
+}
+
+function dimensionLimits(profile) {
+  return {
+    min: Number(profile?.min_dimension || 512),
+    max: Number(profile?.max_dimension || 2048),
+    step: Number(profile?.dimension_multiple || 8),
+    minPixels: Number(profile?.min_pixels || 0),
+    maxPixels: Number(profile?.max_pixels || 0),
+  };
+}
+
+function sizeFitsProfile(profile, width, height) {
+  const limits = dimensionLimits(profile);
+  const w = Number(width), h = Number(height);
+  if (!(w >= limits.min && w <= limits.max && h >= limits.min && h <= limits.max)) return false;
+  if (limits.minPixels && w * h < limits.minPixels) return false;
+  if (limits.maxPixels && w * h > limits.maxPixels) return false;
+  return true;
+}
+
+function sizeOptionsField(profile) {
+  const options = profile?.size_options;
+  if (!options?.length) return "";
+  const current = `${state.form.width}x${state.form.height}`;
+  const matched = options.some((item) => `${item.width}x${item.height}` === current);
+  const megapixels = (Number(state.form.width) * Number(state.form.height) / 1e6).toFixed(1);
+  const custom = matched ? "" : `<option value="" selected>Custom · ${esc(state.form.width)}×${esc(state.form.height)} (${megapixels} MP)</option>`;
+  const items = options.map((item) => {
+    const value = `${item.width}x${item.height}`;
+    return `<option value="${value}" ${value === current ? "selected" : ""}>${esc(item.label)} · ${item.width}×${item.height}</option>`;
+  }).join("");
+  return `<div class="ll-field-row"><div class="ll-field"><label class="ll-label" for="ll-size-option">Output size ${help("MiniMax H3 Image degrades below 4 MP, so smaller runs are blocked. 4 MP screens checkpoints faster; confirm finalists at 16 MP, where the model gives its best results.")}</label><select class="ll-select" id="ll-size-option">${custom}${items}</select></div></div>`;
 }
 
 function profileCategories() {
@@ -247,8 +288,9 @@ function applyPreset(presetId, resetPrompts = true) {
   if (!preset) return;
   state.form.preset = presetId;
   state.form.seeds = preset.seeds.join(", ");
-  state.form.width = preset.width;
-  state.form.height = preset.height;
+  const profileSize = currentProfile()?.resolution_presets?.[presetId];
+  state.form.width = profileSize ? profileSize[0] : preset.width;
+  state.form.height = profileSize ? profileSize[1] : preset.height;
   if (resetPrompts && state.promptMode === "preset") {
     state.prompts = state.boot.default_prompts
       .slice(0, preset.prompt_count)
@@ -743,9 +785,10 @@ function renderSetup() {
                 <div class="ll-field"><label class="ll-label">Matched seeds ${help("Every candidate receives the same seeds for each prompt. Add seeds only after coarse checkpoint screening.")}</label><input class="ll-input" id="ll-seeds" value="${esc(state.form.seeds)}"></div>
                 <div class="ll-field"><label class="ll-label">Reference faces ${help("Folder is relative to ComfyUI/input. Use 8–20 varied, high-quality single-face holdouts not used for training.")}</label><input class="ll-input" id="ll-reference" list="ll-reference-list" value="${esc(state.form.referenceFolder)}"><datalist id="ll-reference-list">${state.boot.references.map((item) => `<option value="${esc(item.folder)}">${item.count} images</option>`).join("")}</datalist></div>
               </div>
+              ${sizeOptionsField(profile)}
               <div class="ll-field-row">
-                <div class="ll-field"><label class="ll-label">Width ${help("Quick uses 768 to screen cheaply. Verify finalists at the model's target resolution. The MOSS reference uses 976 × 1536; every candidate in a run uses the same size.")}</label><input class="ll-input" id="ll-width" type="number" min="512" max="2048" step="8" value="${state.form.width}"></div>
-                <div class="ll-field"><label class="ll-label">Height ${help("Keep the same resolution across candidates. Aspect ratio is a test variable only when deliberately planned.")}</label><input class="ll-input" id="ll-height" type="number" min="512" max="2048" step="8" value="${state.form.height}"></div>
+                <div class="ll-field"><label class="ll-label">Width ${help(profile?.min_pixels ? `Multiples of ${dimensionLimits(profile).step}. ${profile.name} needs ${(profile.min_pixels / 1e6).toFixed(0)} to ${(profile.max_pixels / 1e6).toFixed(0)} MP in total; every candidate in a run uses the same size.` : "Quick uses 768 to screen cheaply. Verify finalists at the model's target resolution. The MOSS reference uses 976 × 1536; every candidate in a run uses the same size.")}</label><input class="ll-input" id="ll-width" type="number" min="${dimensionLimits(profile).min}" max="${dimensionLimits(profile).max}" step="${dimensionLimits(profile).step}" value="${state.form.width}"></div>
+                <div class="ll-field"><label class="ll-label">Height ${help("Keep the same resolution across candidates. Aspect ratio is a test variable only when deliberately planned.")}</label><input class="ll-input" id="ll-height" type="number" min="${dimensionLimits(profile).min}" max="${dimensionLimits(profile).max}" step="${dimensionLimits(profile).step}" value="${state.form.height}"></div>
               </div>
               <button class="ll-btn small ghost ll-advanced-toggle" id="ll-advanced-stack-toggle"><i class="pi ${state.showAdvancedStack ? "pi-angle-up" : "pi-angle-down"}"></i> ${state.showAdvancedStack ? "Hide" : "Show"} advanced model stack</button>
               <div class="ll-field-row ${state.showAdvancedStack ? "" : "ll-hidden"}">
@@ -1601,6 +1644,12 @@ function bindSetup() {
   document.querySelectorAll(".ll-aux-file,.ll-aux-strength").forEach((control) => control.addEventListener("change", () => { syncSetupInputs(); renderShell(); }));
   document.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", () => { syncSetupInputs(); state.form.mode = button.dataset.mode; state.objective = state.form.mode === "strength" ? "best_strength" : "best_checkpoint"; if (state.form.mode === "strength" && state.selected.size > 1) state.selected = new Set([...state.selected].slice(-1)); renderShell(); }));
   document.getElementById("ll-preset")?.addEventListener("change", (event) => { syncSetupInputs(); applyPreset(event.target.value, true); renderShell(); });
+  document.getElementById("ll-size-option")?.addEventListener("change", (event) => {
+    syncSetupInputs();
+    const [width, height] = String(event.target.value).split("x").map(Number);
+    if (width && height) { state.form.width = width; state.form.height = height; }
+    renderShell();
+  });
   document.getElementById("ll-baseline")?.addEventListener("change", (event) => { state.form.includeBaseline = event.target.checked; renderShell(); });
   document.getElementById("ll-search")?.addEventListener("input", (event) => { state.search = event.target.value; const list = document.getElementById("ll-candidate-list"); if (list) list.innerHTML = renderCandidates(); bindCandidateChecks(); });
   document.getElementById("ll-group")?.addEventListener("change", (event) => { state.group = event.target.value; const list = document.getElementById("ll-candidate-list"); if (list) list.innerHTML = renderCandidates(); bindCandidateChecks(); });
